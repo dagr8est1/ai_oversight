@@ -421,6 +421,57 @@ def test_second_pass_citation_from_a_table_type_element_is_not_confidently_extra
     assert field.status == "needs_review"
 
 
+def test_second_pass_invites_a_tentative_table_citation_instead_of_forbidding_one():
+    # found via a real end-to-end run: asked directly about
+    # monitoring_frequency, with a control-matrix row literally stating
+    # "C-03 | Monthly PSI review | Model Risk | ACTIVE", the model
+    # returned null rather than offering it even as a tentative match --
+    # the main pass's stricter wording ("do not use a value from inside
+    # such a table ... unless ... document-wide") is appropriate there
+    # (it protects against the model juggling many fields/candidates at
+    # once, which is how it previously mis-assigned four different
+    # controls' text to four unrelated fields), but the second pass only
+    # ever asks about one already-confirmed-missing field at a time, so a
+    # tentative guess is low-risk and worth inviting -- the structural
+    # table-citation check (never confidently `extracted`, see
+    # test_a_value_cited_from_a_table_type_element_is_never_confidently_extracted)
+    # is what keeps this honest regardless of prompt wording, not the main
+    # pass's blanket caution.
+    captured_main_pass_prompts = []
+    captured_second_pass_prompts = []
+
+    def fake_generate(prompt: str) -> str:
+        if "ONE specific structured field" in prompt:
+            captured_second_pass_prompts.append(prompt)
+            return '{"value": null}'
+        captured_main_pass_prompts.append(prompt)
+        return "{}"
+
+    doc = ParsedDocument(
+        document_id="sha256:x",
+        filename="x.pdf",
+        format="pdf",
+        elements=[
+            Element(
+                element_id="page4.table0",
+                type="table",
+                page_or_slide=4,
+                method="granite_vision_tables_json",
+                content={"rows": [["CONTROLID", "CADENCE"], ["C-03", "Monthly PSI review"]]},
+            )
+        ],
+    )
+
+    qwen_local.extract(doc, generate_fn=fake_generate)
+
+    # the main pass's stricter wording is untouched
+    assert "do not use a value" in captured_main_pass_prompts[0].lower()
+    # the second pass invites a tentative citation instead of forbidding one
+    assert captured_second_pass_prompts
+    assert all("do not use a value" not in p.lower() for p in captured_second_pass_prompts)
+    assert any("tentative" in p.lower() for p in captured_second_pass_prompts)
+
+
 def test_second_pass_prompt_includes_the_whole_page_not_a_5_element_slice():
     captured_second_pass_prompts = []
 

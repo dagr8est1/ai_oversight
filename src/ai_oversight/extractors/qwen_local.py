@@ -435,9 +435,11 @@ def _build_single_field_prompt(
         "Content marked [TABLE of repeated records, not a single document-level fact] lists "
         "multiple instances of the same kind of thing (e.g. several different controls, "
         "incidents, or risks) -- one row or cell from it describes only that one instance, "
-        "never the whole document. Do not use a value from inside such a table for this "
-        "field unless the excerpt's own wording states it applies document-wide, not just "
-        "to one row.\n\n"
+        "not a confirmed document-wide fact. Still report it (with its element_id) if it "
+        "looks relevant to this field, even though it only describes one instance -- it "
+        "will automatically be treated as a tentative, human-reviewed suggestion rather "
+        "than a confirmed value, so prefer surfacing a plausible match over omitting "
+        "one.\n\n"
         f"Excerpt (page/slide {chunk.page_or_slide}):\n{excerpt}\n"
     )
     if previous_error is not None:
