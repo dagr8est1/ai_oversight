@@ -527,11 +527,16 @@ confidence = floor + (ceiling - floor) * corroboration</div>
 <section id="ground-truth">
   <h2>Testing with Ground-truth Check</h2>
   <p>
-    Two new, deliberately minimal sample files — <code>Mini_Vision_Test_Internal_AI_Risk.pdf</code> (1 scanned
-    page, 10 label/value facts) and <code>Mini_Vision_Test_External_AI_Usage.pptx</code> (1 slide, 9 facts) —
-    were run through the real pipeline via <code>batch</code> (live Granite Vision + <code>qwen_local</code>),
-    producing 44 rows (22 fields × 2 files). Each row below was then checked by hand against the document's
-    actual content: does this field's information really appear in the source, or not?
+    Every file in this section is a <strong>simulated</strong> PDF or PPTX report — synthetic, fictional
+    test documents built to exercise this pipeline, not real filings from any organization. Each one is run
+    through the real pipeline via <code>batch</code> (live Granite Vision + <code>qwen_local</code>), and every
+    resulting row is then checked by hand against that document's actual content: does this field's
+    information really appear in the source, or not?
+  </p>
+  <p>
+    Two deliberately minimal files start this off — <code>Mini_Vision_Test_Internal_AI_Risk.pdf</code> (1
+    scanned page, 10 label/value facts) and <code>Mini_Vision_Test_External_AI_Usage.pptx</code> (1 slide, 9
+    facts) — producing 44 rows (22 fields × 2 files).
   </p>
   <p>
     <strong>37 of 44</strong> rows are clean matches — the pipeline's <code>missing</code> correctly means
