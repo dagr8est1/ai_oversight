@@ -6,7 +6,7 @@ import ai_oversight
 from ai_oversight.config import Settings
 from ai_oversight.extractors import granite_vision, qwen_local, rules
 from ai_oversight.parsers import pdf_parser, pptx_parser
-from ai_oversight.reporting import csv_writer, json_writer, markdown_writer
+from ai_oversight.reporting import csv_writer, html_report_writer, json_writer, markdown_writer
 
 app = typer.Typer(help="Local AI-usage-report extraction CLI.")
 
@@ -193,12 +193,15 @@ def batch(
         help="Also recover chart/table data Phase 1 could only flag, via Granite Vision. "
         "Defaults to the AI_OVERSIGHT_VISION_ENABLED env var.",
     ),
-    out: Path = typer.Option(..., "--out", help="Where to write the combined CSV report."),
+    out: Path = typer.Option(
+        ..., "--out", help="Where to write the combined report. A .html path writes an HTML report; any other extension writes CSV."
+    ),
 ) -> None:
     """Extract the 22 canonical fields from each of several documents and
-    write one combined CSV: one row per (file, field), with that field's
-    status, value, and confidence. A file that fails to parse or extract is
-    reported and skipped rather than aborting the whole batch."""
+    write one combined report: one row per (file, field), with that field's
+    status, value, and confidence. Written as CSV, or as an HTML report if
+    --out ends in .html. A file that fails to parse or extract is reported
+    and skipped rather than aborting the whole batch."""
     resolved_vision = Settings.from_env().vision_enabled if vision is None else vision
 
     backend_fn = _BACKENDS.get(backend)
@@ -233,5 +236,8 @@ def batch(
         raise typer.Exit(code=1)
 
     out.parent.mkdir(parents=True, exist_ok=True)
-    csv_writer.write(results, out)
+    if out.suffix.lower() == ".html":
+        html_report_writer.write(results, out)
+    else:
+        csv_writer.write(results, out)
     typer.echo(f"wrote {out} ({len(results)} file(s), {len(results) * 22} row(s))")

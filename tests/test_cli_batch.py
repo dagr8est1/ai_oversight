@@ -60,6 +60,20 @@ def test_batch_exits_with_an_error_if_every_file_fails(tmp_path):
     assert not out.exists()
 
 
+def test_batch_writes_an_html_report_when_out_ends_in_html(tmp_path):
+    out = tmp_path / "report.html"
+
+    result = runner.invoke(
+        app, ["batch", str(SAMPLE_PDF), str(SAMPLE_PPTX), "--backend", "rules", "--out", str(out)]
+    )
+
+    assert result.exit_code == 0, result.output
+    content = out.read_text()
+    assert content.strip().startswith("<!doctype html>")
+    assert "Sample_Internal_AI_Oversight_Report.pdf" in content
+    assert "Sample_External_AI_Usage_Disclosure.pptx" in content
+
+
 def test_batch_rejects_unknown_backend_with_a_friendly_error(tmp_path):
     out = tmp_path / "report.csv"
 
