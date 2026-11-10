@@ -578,3 +578,52 @@ def test_wide_table_with_multiple_full_rows_and_no_summary_row_is_unchanged():
         ["C-01", "Human authorization", "Operations Lead"],
         ["C-02", "Input data validation", "Data Engineering"],
     ]
+
+
+def test_build_mlx_vision_fn_overrides_the_default_100_token_cap():
+    # found via a real end-to-end run: mlx_vlm.generate's own default is
+    # max_tokens=100 (confirmed from its docstring), which truncated a
+    # genuine 16-row inventory table mid-JSON on page 1 of the real PDF --
+    # the whole response was discarded since it never became valid JSON,
+    # even though most of the real data was right there in the raw text.
+    import io
+
+    from PIL import Image
+
+    from ai_oversight.config import Settings
+
+    calls = []
+
+    class _FakeUtils:
+        @staticmethod
+        def load_config(repo):
+            return {"fake": "config"}
+
+    class _FakeMlxVlm:
+        utils = _FakeUtils
+
+        @staticmethod
+        def load(repo):
+            return "fake-model", "fake-processor"
+
+        @staticmethod
+        def apply_chat_template(processor, config, task, num_images):
+            return "fake-prompt"
+
+        @staticmethod
+        def generate(model, processor, prompt, images, verbose=False, **kwargs):
+            calls.append(kwargs)
+
+            class _Result:
+                text = "ok"
+
+            return _Result()
+
+    vision_fn = granite_vision._build_mlx_vision_fn(Settings(), _FakeMlxVlm)
+
+    png_bytes = io.BytesIO()
+    Image.new("RGB", (4, 4), color="red").save(png_bytes, format="PNG")
+    vision_fn(png_bytes.getvalue(), "<tables_json>")
+
+    assert len(calls) == 1
+    assert calls[0].get("max_tokens", 100) >= 2048

@@ -15,6 +15,12 @@ VisionFn = Callable[[bytes, str], str]
 
 _CODE_FENCE = re.compile(r"^```[a-zA-Z]*\n|\n```$")
 
+# A multi-row table (e.g. a 16-row inventory) can need well over a thousand
+# tokens of JSON; mlx_vlm.generate's own default (max_tokens=100) silently
+# truncates mid-JSON, which _parse_table_json then rejects outright --
+# discarding real, mostly-complete data along with the broken tail.
+VISION_MAX_TOKENS = 2048
+
 
 class VisionModelNotAvailableError(RuntimeError):
     """The vision backend's model dependencies (mlx-vlm, or transformers+torch) are missing."""
@@ -423,7 +429,13 @@ def _build_mlx_vision_fn(settings: Settings, mlx_vlm_module) -> VisionFn:
     def vision_fn(image_bytes: bytes, task: str) -> str:
         image = _bytes_to_temp_image(image_bytes)
         prompt = mlx_vlm_module.apply_chat_template(processor, config, task, num_images=1)
-        result = mlx_vlm_module.generate(model, processor, prompt, [image], verbose=False)
+        # mlx_vlm.generate's own default is max_tokens=100 (per its
+        # docstring) -- found via a real run truncating a genuine 16-row
+        # table mid-JSON, discarding the whole response even though most
+        # of the real data was in the raw text before the cutoff.
+        result = mlx_vlm_module.generate(
+            model, processor, prompt, [image], verbose=False, max_tokens=VISION_MAX_TOKENS
+        )
         return result.text
 
     return vision_fn
@@ -444,7 +456,7 @@ def _build_transformers_vision_fn(settings: Settings, torch, model_cls, processo
         prompt = processor.apply_chat_template(messages, add_generation_prompt=True)
         inputs = processor(images=image, text=prompt, return_tensors="pt").to(device)
         with torch.no_grad():
-            output_ids = model.generate(**inputs, max_new_tokens=1024)
+            output_ids = model.generate(**inputs, max_new_tokens=VISION_MAX_TOKENS)
         return processor.decode(output_ids[0][inputs["input_ids"].shape[1] :], skip_special_tokens=True)
 
     return vision_fn
