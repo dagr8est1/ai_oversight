@@ -223,11 +223,19 @@ _TABLE_MARKER = "[TABLE of repeated records, not a single document-level fact] "
 
 
 def _element_text(element: Element) -> str:
-    if element.raw_text:
-        return element.raw_text
+    # a structured label:value pair is strictly more informative than a
+    # bare raw_text value, and some parsers set both (e.g. a PDF's
+    # explicit-field-ID inventory row has a clean label in content but a
+    # label-less raw_text fallback) -- checking raw_text first discarded
+    # the label entirely, leaving qwen_local unable to tell two adjacent,
+    # equally unlabeled rows apart (found via a real run: the model
+    # confused a "Legal entity" row with an "Application name" row two
+    # positions away, since neither carried its label into the prompt).
     content = element.content or {}
     if "label" in content and "value" in content:
         return f"{content['label']}: {content['value']}"
+    if element.raw_text:
+        return element.raw_text
     if "cells" in content:
         return _TABLE_MARKER + " | ".join(str(c) for c in content["cells"])
     if "rows" in content:

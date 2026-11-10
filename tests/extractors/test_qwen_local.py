@@ -21,6 +21,41 @@ def _doc_with_one_page(text: str, element_id: str = "page1.text0") -> ParsedDocu
     )
 
 
+def test_element_text_prefers_a_structured_label_over_a_bare_raw_text_value():
+    # found via a real run: pdf_parser sets BOTH raw_text (just the bare
+    # value, e.g. "Example Post-Trade Operations (fictional)") AND a
+    # structured content={"field_id", "label", "value"} for a key_value
+    # element parsed from the PDF's explicit-field-ID inventory table.
+    # _element_text checked raw_text first, discarding the label entirely --
+    # so qwen_local never saw "Legal entity: ..." at all, only the bare
+    # value, and confused it with an adjacent, equally unlabeled row
+    # (assigning the Legal entity's value to application_name instead).
+    el = Element(
+        element_id="page2.kv4",
+        type="key_value",
+        page_or_slide=2,
+        method="pdf_explicit_field_id",
+        content={"field_id": "02", "label": "Legal entity", "value": "Example Post-Trade Operations (fictional)"},
+        raw_text="Example Post-Trade Operations (fictional)",
+    )
+
+    assert qwen_local._element_text(el) == "Legal entity: Example Post-Trade Operations (fictional)"
+
+
+def test_element_text_falls_back_to_raw_text_when_there_is_no_structured_label():
+    # a plain text block has no content label/value pair -- raw_text is
+    # still the right (and only) source for it
+    el = Element(
+        element_id="page1.text0",
+        type="text",
+        page_or_slide=1,
+        method="pymupdf_text_block",
+        raw_text="Executive overview",
+    )
+
+    assert qwen_local._element_text(el) == "Executive overview"
+
+
 def test_extract_uses_valid_first_response_without_retrying():
     calls = []
 
