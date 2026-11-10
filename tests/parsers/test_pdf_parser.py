@@ -4,7 +4,7 @@ from pathlib import Path
 import pymupdf
 from PIL import Image
 
-from ai_oversight.parsers.pdf_parser import parse
+from ai_oversight.parsers.pdf_parser import chart_region_on_page, parse
 
 SAMPLE = Path(__file__).parents[2] / "data" / "samples" / "Sample_Internal_AI_Oversight_Report.pdf"
 
@@ -93,6 +93,25 @@ def test_page_with_no_text_layer_warns_instead_of_crashing(tmp_path):
 
     assert parsed.elements == []
     assert any("no text layer" in w.lower() or "scanned" in w.lower() for w in parsed.warnings)
+
+
+def test_chart_region_on_page_locates_the_gridline_cluster_for_the_chart_page():
+    with pymupdf.open(SAMPLE) as doc:
+        page = doc[2]  # page 3, the one with the line chart
+        region = chart_region_on_page(page)
+
+        assert region is not None
+        # the chart sits in the body of the page, not spanning the full page
+        assert region.width < page.rect.width
+        assert region.height < page.rect.height
+        assert region.width > 50
+        assert region.height > 50
+
+
+def test_chart_region_on_page_is_none_for_decorative_pages():
+    with pymupdf.open(SAMPLE) as doc:
+        for page_index in (0, 1, 3):  # pages 1, 2, 4
+            assert chart_region_on_page(doc[page_index]) is None
 
 
 def test_page_with_raster_image_is_flagged_not_silently_dropped(tmp_path):

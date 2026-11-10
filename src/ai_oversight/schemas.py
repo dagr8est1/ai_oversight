@@ -65,6 +65,10 @@ class ReviewFlag(BaseModel):
     code: str
     message: str
     field: str | None = None
+    # Explicit per PLAN.md Section 5: a review flag is a rule-generated
+    # suggestion, never a compliance finding -- stated in the JSON itself,
+    # not only in the Markdown report's heading.
+    kind: Literal["rule_generated_suggestion"] = "rule_generated_suggestion"
 
 
 class ExtractionResult(BaseModel):

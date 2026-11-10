@@ -23,6 +23,10 @@ MIN_GRIDLINES_FOR_CHART = 4
 GRIDLINE_MIN_WIDTH = 100.0
 GRIDLINE_MAX_HEIGHT = 1.0
 
+# Margin (points) added around the gridline cluster's bounding box so a crop
+# still includes nearby axis labels/legends, not just the bare plot area.
+CHART_REGION_MARGIN = 40.0
+
 
 def parse(path: Path | str) -> ParsedDocument:
     path = Path(path)
@@ -159,15 +163,49 @@ def _pair_labels_and_values(
     return elements
 
 
-def _chart_warnings(page, page_number: int) -> list[str]:
-    gridlines = [
+def _largest_gridline_group(page) -> list:
+    """Candidate gridline-type strokes, grouped by their (x0, x1) span and
+    reduced to the largest group. A page-wide header/footer rule also matches
+    the raw stroke filter but only ever appears once or twice at its own
+    distinct span, so grouping by span (not just counting every stroke)
+    keeps a decorative rule from being unioned into the chart's bounding box
+    or from padding the warning's stroke count."""
+    candidates = [
         drawing
         for drawing in page.get_drawings()
         if drawing["type"] == "s"
         and drawing["rect"].height < GRIDLINE_MAX_HEIGHT
         and drawing["rect"].width > GRIDLINE_MIN_WIDTH
     ]
-    if len(gridlines) >= MIN_GRIDLINES_FOR_CHART:
+    groups: dict[tuple[float, float], list] = {}
+    for drawing in candidates:
+        rect = drawing["rect"]
+        key = (round(rect.x0, 1), round(rect.x1, 1))
+        groups.setdefault(key, []).append(drawing)
+    return max(groups.values(), key=len, default=[])
+
+
+def chart_region_on_page(page) -> "pymupdf.Rect | None":
+    """The gridline cluster's bounding box (with a margin), or None if this
+    page has no chart-like vector drawing. Shared by Phase 1's warning and
+    Phase 3's vision-crop routing so both agree on what counts as a chart."""
+    gridlines = _largest_gridline_group(page)
+    if len(gridlines) < MIN_GRIDLINES_FOR_CHART:
+        return None
+
+    region = gridlines[0]["rect"]
+    for drawing in gridlines[1:]:
+        region |= drawing["rect"]
+
+    margin = CHART_REGION_MARGIN
+    expanded = pymupdf.Rect(
+        region.x0 - margin, region.y0 - margin, region.x1 + margin, region.y1 + margin
+    )
+    return expanded & page.rect
+
+
+def _chart_warnings(page, page_number: int) -> list[str]:
+    if chart_region_on_page(page) is not None:
         return [
             (
                 f"page {page_number}: vector drawing detected (chart-like); structured "

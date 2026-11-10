@@ -82,6 +82,113 @@ def test_missing_field_is_null_with_missing_status_not_fabricated():
     assert result.fields["submission_id"].evidence == []
 
 
+def test_label_mismatched_with_its_field_id_is_flagged_ambiguous_not_trusted():
+    # field_id "05" is business_owner, but this document's label at that
+    # position says "Technical owner" -- trusting the position blindly would
+    # silently put a technical owner's name into business_owner.
+    doc = ParsedDocument(
+        document_id="sha256:x",
+        filename="x.pdf",
+        format="pdf",
+        elements=[
+            Element(
+                element_id="page1.kv0",
+                type="key_value",
+                page_or_slide=1,
+                method="pymupdf_text_block_pair",
+                content={"field_id": "05", "label": "Technical owner", "value": "Alex Rivera"},
+            )
+        ],
+    )
+
+    result = rules.extract(doc)
+
+    assert result.fields["business_owner"].status == "ambiguous"
+    assert result.fields["business_owner"].value == "Alex Rivera"
+    assert any("business_owner" in w or "ambiguous" in w.lower() for w in result.extraction_warnings)
+
+
+def test_duplicate_field_id_with_differing_values_is_flagged_conflicting():
+    doc = ParsedDocument(
+        document_id="sha256:x",
+        filename="x.pdf",
+        format="pdf",
+        elements=[
+            Element(
+                element_id="page1.kv0",
+                type="key_value",
+                page_or_slide=1,
+                method="pymupdf_text_block_pair",
+                content={"field_id": "07", "label": "Model type", "value": "XGBoost"},
+            ),
+            Element(
+                element_id="page3.kv0",
+                type="key_value",
+                page_or_slide=3,
+                method="pymupdf_text_block_pair",
+                content={"field_id": "07", "label": "Model type", "value": "Random Forest"},
+            ),
+        ],
+    )
+
+    result = rules.extract(doc)
+
+    assert result.fields["model_type"].status == "conflicting"
+    assert len(result.fields["model_type"].evidence) == 2
+    assert any(flag.field == "model_type" for flag in result.review_flags)
+
+
+def test_duplicate_field_id_with_identical_values_is_not_a_conflict():
+    doc = ParsedDocument(
+        document_id="sha256:x",
+        filename="x.pdf",
+        format="pdf",
+        elements=[
+            Element(
+                element_id="page1.kv0",
+                type="key_value",
+                page_or_slide=1,
+                method="pymupdf_text_block_pair",
+                content={"field_id": "07", "label": "Model type", "value": "XGBoost"},
+            ),
+            Element(
+                element_id="page3.kv0",
+                type="key_value",
+                page_or_slide=3,
+                method="pymupdf_text_block_pair",
+                content={"field_id": "07", "label": "Model type", "value": "XGBoost"},
+            ),
+        ],
+    )
+
+    result = rules.extract(doc)
+
+    assert result.fields["model_type"].status == "extracted"
+    assert result.fields["model_type"].value == "XGBoost"
+
+
+def test_unparseable_performance_text_is_needs_review_not_extracted():
+    doc = ParsedDocument(
+        document_id="sha256:x",
+        filename="x.pdf",
+        format="pdf",
+        elements=[
+            Element(
+                element_id="page1.kv0",
+                type="key_value",
+                page_or_slide=1,
+                method="pymupdf_text_block_pair",
+                content={"field_id": "17", "label": "Performance", "value": "Not yet measured"},
+            )
+        ],
+    )
+
+    result = rules.extract(doc)
+
+    assert result.fields["model_performance"].status == "needs_review"
+    assert result.fields["model_performance"].value == "Not yet measured"
+
+
 def test_narrative_and_chart_disagreement_is_flagged_as_conflicting_not_resolved():
     doc = ParsedDocument(
         document_id="sha256:conflict",

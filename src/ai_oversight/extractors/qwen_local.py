@@ -7,6 +7,14 @@ from typing import Any
 
 from ai_oversight.config import Settings
 from ai_oversight.parsers.document_ir import Element, ParsedDocument
+from ai_oversight.processing.merge import (
+    collect_incidents,
+    collect_metrics,
+    detect_performance_conflicts,
+    infer_document_type,
+    normalize_value,
+)
+from ai_oversight.processing.validate import validate_field_shape
 from ai_oversight.schemas import (
     CANONICAL_FIELDS,
     Evidence,
@@ -31,8 +39,13 @@ class ModelNotAvailableError(RuntimeError):
 @dataclass
 class _Chunk:
     page_or_slide: int
-    element_ids: list[str]
-    text: str
+    element_texts: dict[str, str]  # element_id -> its own source text
+
+
+@dataclass
+class _Candidate:
+    value: Any
+    evidence: Evidence
 
 
 def extract(
@@ -44,12 +57,15 @@ def extract(
     settings = settings or Settings.from_env()
     generate_fn = generate_fn or _build_default_generate_fn(settings)
 
-    candidates: dict[str, list[tuple[Any, Evidence]]] = defaultdict(list)
+    candidates: dict[str, list[_Candidate]] = defaultdict(list)
+    ambiguous_signaled: set[str] = set()
+    failed_chunks: list[tuple[_Chunk, str]] = []  # (chunk, raw_response)
     extraction_warnings = list(doc.warnings)
 
     for chunk in _chunk_by_page(doc):
         parsed, raw_response, ok = _extract_chunk(chunk, generate_fn)
         if not ok:
+            failed_chunks.append((chunk, raw_response))
             extraction_warnings.append(
                 f"page/slide {chunk.page_or_slide}: model response did not validate "
                 f"after {MAX_ATTEMPTS} attempt(s); needs_review (raw response kept, "
@@ -57,27 +73,60 @@ def extract(
             )
             continue
 
-        evidence = Evidence(
-            page_or_slide=chunk.page_or_slide,
-            element_id=",".join(chunk.element_ids),
-            quote=raw_response,
-            method="qwen_local",
-        )
-        for field_name, value in parsed.items():
-            if field_name not in CANONICAL_FIELDS or value in (None, ""):
+        for field_name, entry in parsed.items():
+            if field_name not in CANONICAL_FIELDS:
                 continue
-            candidates[field_name].append((value, evidence))
+            value, element_id = _unpack_field_entry(entry)
+            if value is None:
+                # the model explicitly flagged this field as present-but-unclear
+                # for this chunk, rather than not mentioning it at all
+                ambiguous_signaled.add(field_name)
+                continue
+            evidence = _build_evidence(chunk, element_id, raw_response)
+            candidates[field_name].append(_Candidate(value=value, evidence=evidence))
 
-    fields, review_flags = _merge_candidates(candidates)
+    fields, review_flags = _merge_candidates(candidates, ambiguous_signaled, failed_chunks)
+
+    metrics, metric_warnings = collect_metrics(doc.elements)
+    conflict_flags = detect_performance_conflicts(fields, metrics)
+    incidents = collect_incidents(doc.elements)
 
     return ExtractionResult(
         document_id=doc.document_id,
         source_file=doc.filename,
-        document_type="unknown",
+        document_type=infer_document_type(doc.filename),
         extracted_at=datetime.now(UTC),
         fields=fields,
-        review_flags=review_flags,
-        extraction_warnings=extraction_warnings,
+        metrics=metrics,
+        incidents=incidents,
+        review_flags=[*review_flags, *conflict_flags],
+        extraction_warnings=[*extraction_warnings, *metric_warnings],
+    )
+
+
+def _unpack_field_entry(entry: Any) -> tuple[Any, str | None]:
+    """A field entry is {"value": ..., "element_id": ...}; tolerate a bare
+    scalar too, in case the model skips the wrapper object."""
+    if isinstance(entry, dict) and "value" in entry:
+        return entry.get("value"), entry.get("element_id")
+    return entry, None
+
+
+def _build_evidence(chunk: _Chunk, cited_element_id: str | None, raw_response: str) -> Evidence:
+    if cited_element_id and cited_element_id in chunk.element_texts:
+        return Evidence(
+            page_or_slide=chunk.page_or_slide,
+            element_id=cited_element_id,
+            quote=chunk.element_texts[cited_element_id],
+            method="qwen_local",
+        )
+    # the model didn't cite a real element in this chunk -- degrade to a
+    # chunk-level citation rather than rejecting an otherwise-usable value
+    return Evidence(
+        page_or_slide=chunk.page_or_slide,
+        element_id=",".join(chunk.element_texts),
+        quote=raw_response,
+        method="qwen_local",
     )
 
 
@@ -88,9 +137,8 @@ def _chunk_by_page(doc: ParsedDocument) -> list[_Chunk]:
 
     chunks = []
     for page in sorted(by_page):
-        elements = by_page[page]
-        text = "\n".join(_element_text(el) for el in elements if _element_text(el))
-        chunks.append(_Chunk(page_or_slide=page, element_ids=[el.element_id for el in elements], text=text))
+        element_texts = {el.element_id: text for el in by_page[page] if (text := _element_text(el))}
+        chunks.append(_Chunk(page_or_slide=page, element_texts=element_texts))
     return chunks
 
 
@@ -101,7 +149,9 @@ def _element_text(element: Element) -> str:
     if "label" in content and "value" in content:
         return f"{content['label']}: {content['value']}"
     if "cells" in content:
-        return " | ".join(content["cells"])
+        return " | ".join(str(c) for c in content["cells"])
+    if "rows" in content:
+        return "\n".join(" | ".join(str(c) for c in row) for row in content["rows"])
     if "categories" in content and "series" in content:
         series_text = "; ".join(f"{s['name']}={s['values']}" for s in content["series"])
         return f"chart categories={content['categories']} {series_text}"
@@ -110,12 +160,15 @@ def _element_text(element: Element) -> str:
 
 def _build_prompt(chunk: _Chunk, previous_error: str | None = None, previous_response: str | None = None) -> str:
     field_list = ", ".join(CANONICAL_FIELDS)
+    excerpt = "\n".join(f"[{element_id}] {text}" for element_id, text in chunk.element_texts.items())
     base = (
         "You extract structured fields from an AI-governance report excerpt. "
-        f"Respond with ONLY a JSON object whose keys are a subset of: {field_list}. "
-        "Only include a key if this excerpt states that field; use null if present "
-        "but unclear. Never invent a value not stated in the excerpt.\n\n"
-        f"Excerpt (page/slide {chunk.page_or_slide}):\n{chunk.text}\n"
+        f'Respond with ONLY a JSON object: {{"field_name": {{"value": ..., "element_id": "..."}}}}. '
+        f"field_name must be one of: {field_list}. element_id must be one of the bracketed IDs "
+        "below, the one that actually states the value. Only include a key if this excerpt "
+        'states that field. If a field is mentioned but unclear, use {"value": null, '
+        '"element_id": "..."}. Never invent a value not stated in the excerpt.\n\n'
+        f"Excerpt (page/slide {chunk.page_or_slide}):\n{excerpt}\n"
     )
     if previous_error is not None:
         base += (
@@ -140,20 +193,35 @@ def _extract_chunk(chunk: _Chunk, generate_fn: GenerateFn) -> tuple[dict[str, An
 
 
 def _parse_and_validate(response: str) -> tuple[dict[str, Any] | None, str | None]:
-    start, end = response.find("{"), response.rfind("}")
-    if start == -1 or end == -1 or end < start:
+    """Find the last top-level JSON object the response actually decodes,
+    scanning from each '{' rather than trusting the first-to-last-brace span
+    -- that span breaks on trailing prose containing its own brace, or an
+    echoed example object followed by the real answer. A '{' nested inside
+    the current winning object's span is skipped, so only sibling top-level
+    objects compete (the last one wins, e.g. the real answer after an echoed
+    example), never the already-matched object's own inner keys/values."""
+    decoder = json.JSONDecoder()
+    last_valid: dict[str, Any] | None = None
+    last_valid_end = 0
+    for index, char in enumerate(response):
+        if char != "{" or index < last_valid_end:
+            continue
+        try:
+            candidate, end = decoder.raw_decode(response, index)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(candidate, dict):
+            last_valid = candidate
+            last_valid_end = end
+    if last_valid is None:
         return None, "no JSON object found in response"
-    try:
-        parsed = json.loads(response[start : end + 1])
-    except json.JSONDecodeError as exc:
-        return None, f"JSON decode error: {exc}"
-    if not isinstance(parsed, dict):
-        return None, "response was valid JSON but not an object"
-    return parsed, None
+    return last_valid, None
 
 
 def _merge_candidates(
-    candidates: dict[str, list[tuple[Any, Evidence]]]
+    candidates: dict[str, list[_Candidate]],
+    ambiguous_signaled: set[str],
+    failed_chunks: list[tuple[_Chunk, str]],
 ) -> tuple[dict[str, FieldValue], list[ReviewFlag]]:
     fields: dict[str, FieldValue] = {}
     review_flags: list[ReviewFlag] = []
@@ -161,15 +229,13 @@ def _merge_candidates(
     for name in CANONICAL_FIELDS:
         entries = candidates.get(name, [])
         if not entries:
-            fields[name] = FieldValue(status="missing")
+            fields[name] = _field_with_no_candidates(name, ambiguous_signaled, failed_chunks)
             continue
 
-        distinct_values = {_stable_key(value) for value, _ in entries}
-        evidence = [ev for _, ev in entries]
-        if len(distinct_values) == 1:
-            fields[name] = FieldValue(value=entries[0][0], status="extracted", evidence=evidence)
-        else:
-            fields[name] = FieldValue(value=entries[0][0], status="conflicting", evidence=evidence)
+        distinct_values = {_stable_key(c.value) for c in entries}
+        evidence = [c.evidence for c in entries]
+        if len(distinct_values) > 1:
+            fields[name] = FieldValue(value=entries[0].value, status="conflicting", evidence=evidence)
             review_flags.append(
                 ReviewFlag(
                     code="multiple_candidate_values",
@@ -177,11 +243,36 @@ def _merge_candidates(
                     message=f"{len(distinct_values)} differing candidate values found across chunks",
                 )
             )
+            continue
+
+        value, status, notes = normalize_value(name, entries[0].value)
+        field = FieldValue(value=value, status=status, evidence=evidence, normalization_notes=notes)
+        fields[name] = validate_field_shape(name, field)
+
     return fields, review_flags
 
 
+def _field_with_no_candidates(
+    name: str, ambiguous_signaled: set[str], failed_chunks: list[tuple[_Chunk, str]]
+) -> FieldValue:
+    if name in ambiguous_signaled:
+        return FieldValue(status="ambiguous", normalization_notes="model flagged as present but unclear")
+    if failed_chunks:
+        evidence = [
+            Evidence(
+                page_or_slide=chunk.page_or_slide,
+                element_id=",".join(chunk.element_texts),
+                quote=raw_response,
+                method="qwen_local_unvalidated",
+            )
+            for chunk, raw_response in failed_chunks
+        ]
+        return FieldValue(status="needs_review", evidence=evidence)
+    return FieldValue(status="missing")
+
+
 def _stable_key(value: Any) -> str:
-    return json.dumps(value, sort_keys=True) if isinstance(value, (dict, list)) else str(value)
+    return json.dumps(value, sort_keys=True) if isinstance(value, dict | list) else str(value)
 
 
 def _build_default_generate_fn(settings: Settings) -> GenerateFn:
@@ -195,13 +286,33 @@ def _build_default_generate_fn(settings: Settings) -> GenerateFn:
             "are downloaded unless this backend is actually invoked."
         ) from exc
 
+    device = "mps" if torch.backends.mps.is_available() else ("cuda" if torch.cuda.is_available() else "cpu")
     tokenizer = AutoTokenizer.from_pretrained(settings.text_model, cache_dir=str(settings.cache_dir))
-    model = AutoModelForCausalLM.from_pretrained(settings.text_model, cache_dir=str(settings.cache_dir))
+    model = AutoModelForCausalLM.from_pretrained(
+        settings.text_model, cache_dir=str(settings.cache_dir), torch_dtype="auto"
+    ).to(device)
+
+    few_shot = [
+        {
+            "role": "user",
+            "content": (
+                'Excerpt (page/slide 1):\n[page1.text0] 03 / Application name: Example App\n\n'
+                'Respond with ONLY a JSON object: {"field_name": {"value": ..., "element_id": "..."}}.'
+            ),
+        },
+        {
+            "role": "assistant",
+            "content": '{"application_name": {"value": "Example App", "element_id": "page1.text0"}}',
+        },
+    ]
 
     def generate(prompt: str) -> str:
-        inputs = tokenizer(prompt, return_tensors="pt")
+        messages = [*few_shot, {"role": "user", "content": prompt}]
+        inputs = tokenizer.apply_chat_template(
+            messages, add_generation_prompt=True, return_tensors="pt"
+        ).to(device)
         with torch.no_grad():
-            output_ids = model.generate(**inputs, max_new_tokens=512)
-        return tokenizer.decode(output_ids[0][inputs["input_ids"].shape[1] :], skip_special_tokens=True)
+            output_ids = model.generate(inputs, max_new_tokens=1024)
+        return tokenizer.decode(output_ids[0][inputs.shape[1] :], skip_special_tokens=True)
 
     return generate
