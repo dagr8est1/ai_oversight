@@ -5,6 +5,7 @@ from ai_oversight.processing.merge import (
     detect_performance_conflicts,
     infer_document_type,
     match_metric,
+    normalize_value,
 )
 from ai_oversight.schemas import FieldValue, MetricObservation
 
@@ -168,3 +169,55 @@ def test_detect_performance_conflicts_does_not_flag_agreement():
 
     assert flags == []
     assert fields["model_performance"].status == "extracted"
+
+
+def test_detect_performance_conflicts_skips_non_numeric_entries_without_crashing():
+    # found via a real run: a `conflicting`-status model_performance field
+    # never goes through normalize_value/validate_field_shape at all (the
+    # early-return conflict path in qwen_local's merge keeps the model's
+    # raw, un-normalized value) -- so a dict with string percentage values
+    # like {"accuracy": "92%"} can reach here directly and must not crash
+    # arithmetic that assumes every entry is already numeric.
+    fields = {
+        "model_performance": FieldValue(
+            value={"accuracy": "92%", "grounded_response_rate": "97%"},
+            status="conflicting",
+            evidence=[],
+        )
+    }
+    metrics = [
+        MetricObservation(
+            field="model_performance",
+            name="accuracy",
+            period="Oct 2026",
+            value=0.90,
+            source_element_id="slide5.chart0",
+            page_or_slide=5,
+        )
+    ]
+
+    flags = detect_performance_conflicts(fields, metrics)
+
+    assert flags == []
+    assert fields["model_performance"].status == "conflicting"
+
+
+def test_normalize_value_converts_a_dict_shaped_model_performance_value():
+    # found via a real run: qwen_local's response for model_performance was
+    # already a dict ({"accuracy": "92%", ...}) rather than a flat string --
+    # normalize_value previously only normalized string raw values, so this
+    # sailed through with un-normalized string percentages
+    value, status, notes = normalize_value("model_performance", {"accuracy": "92%"})
+    assert value == {"accuracy": 0.92}
+    assert status == "extracted"
+    assert notes is not None
+
+
+def test_normalize_value_leaves_other_dict_shaped_fields_untouched():
+    # risk_rating's dict shape ({"inherent": "HIGH", "residual": "MEDIUM"})
+    # is already its correct final form -- must not be routed through the
+    # numeric metric-dict normalizer
+    value, status, notes = normalize_value("risk_rating", {"inherent": "HIGH", "residual": "MEDIUM"})
+    assert value == {"inherent": "HIGH", "residual": "MEDIUM"}
+    assert status == "extracted"
+    assert notes is None

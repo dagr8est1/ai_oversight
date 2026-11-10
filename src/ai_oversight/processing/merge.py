@@ -4,6 +4,7 @@ from typing import Any
 from ai_oversight.parsers.document_ir import Element
 from ai_oversight.processing.normalize import (
     normalize_date,
+    normalize_metric_dict,
     normalize_metric_list,
     normalize_risk_rating,
 )
@@ -26,6 +27,13 @@ def normalize_value(name: str, raw_value: Any) -> tuple[Any, str, str | None]:
     parsed cleanly, "needs_review" when the normalizer couldn't reliably
     parse it (the raw text is still returned, never discarded).
     """
+    if name == "model_performance" and isinstance(raw_value, dict):
+        # the model can reply with a dict directly (e.g. {"accuracy": "92%"})
+        # instead of a flat string -- found via a real run where this sailed
+        # through unconverted and later crashed arithmetic that assumes
+        # every dict value is already numeric
+        value, notes, ok = normalize_metric_dict(raw_value)
+        return value, ("extracted" if ok else "needs_review"), notes
     if not isinstance(raw_value, str):
         return raw_value, "extracted", None
     normalizer = _NORMALIZERS.get(name)
@@ -171,6 +179,13 @@ def detect_performance_conflicts(
 
     flags: list[ReviewFlag] = []
     for narrative_key, narrative_value in performance.value.items():
+        if not isinstance(narrative_value, int | float):
+            # a `conflicting` field's value never passed through
+            # normalize_value/validate_field_shape (see _resolve_field_candidates'
+            # early-return on disagreement), so it can still hold a raw,
+            # un-normalized entry like a string percentage -- never trusted
+            # as comparable to a chart's numeric value, but never a crash either
+            continue
         matched_name = match_metric(narrative_key, list(latest_by_name))
         if matched_name is None:
             continue

@@ -88,3 +88,49 @@ def normalize_metric_list(raw: str) -> tuple[dict[str, float] | str, str | None,
         notes_parts.append(f"could not parse segment(s): {'; '.join(unparsed)}")
     notes = "; ".join(notes_parts) if notes_parts else None
     return metrics, notes, not unparsed
+
+
+_SINGLE_METRIC_VALUE = re.compile(r"^\s*([\d.]+)\s*(%)?\s*$")
+
+
+def normalize_metric_dict(raw: dict) -> tuple[dict, str | None, bool]:
+    """Like `normalize_metric_list`, but for when the model already replied
+    with a dict of {name: value} instead of a flat string -- the model can
+    do this, so a dict-shaped value must be normalized the same way a
+    string would be, not passed through unconverted (found via a real run:
+    qwen_local replied with {"accuracy": "92%", ...}, which survived as
+    string percentages and later crashed arithmetic that assumes numeric
+    dict values). An already-numeric entry passes through unchanged; an
+    unparseable entry is dropped from the result (never left in as a string
+    that could crash a numeric consumer downstream) and reported in notes,
+    with ok=False so the caller knows not to trust this as a clean parse.
+    """
+    metrics: dict[str, float] = {}
+    saw_percent = False
+    unparsed: list[str] = []
+
+    for key, value in raw.items():
+        if isinstance(value, int | float):
+            metrics[key] = float(value)
+            continue
+        match = _SINGLE_METRIC_VALUE.match(str(value))
+        if not match:
+            unparsed.append(f"{key}={value!r}")
+            continue
+        number, percent_sign = match.groups()
+        parsed = float(number)
+        if percent_sign:
+            parsed /= 100.0
+            saw_percent = True
+        metrics[key] = parsed
+
+    if not metrics:
+        return raw, "could not parse any metric value from dict; kept raw", False
+
+    notes_parts = []
+    if saw_percent:
+        notes_parts.append("converted percent values to fractions")
+    if unparsed:
+        notes_parts.append(f"could not parse value(s): {'; '.join(unparsed)}")
+    notes = "; ".join(notes_parts) if notes_parts else None
+    return metrics, notes, not unparsed

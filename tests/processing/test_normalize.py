@@ -1,5 +1,6 @@
 from ai_oversight.processing.normalize import (
     normalize_date,
+    normalize_metric_dict,
     normalize_metric_list,
     normalize_risk_rating,
 )
@@ -101,3 +102,28 @@ def test_normalize_metric_list_reports_failure_when_nothing_parses():
     assert ok is False
     assert value == "Not yet measured"
     assert notes is not None
+
+
+def test_normalize_metric_dict_converts_percent_strings_to_fractions():
+    # found via a real run: qwen_local sometimes returns model_performance's
+    # value as a dict directly (e.g. {"accuracy": "92%", ...}) instead of a
+    # flat string -- normalize_value previously only normalized strings, so
+    # this dict sailed through unconverted and later crashed arithmetic in
+    # detect_performance_conflicts that assumes numeric values
+    value, notes, ok = normalize_metric_dict({"accuracy": "92%", "grounded_response_rate": "97%"})
+    assert value == {"accuracy": 0.92, "grounded_response_rate": 0.97}
+    assert notes is not None
+    assert ok is True
+
+
+def test_normalize_metric_dict_passes_through_already_numeric_values():
+    value, _notes, ok = normalize_metric_dict({"precision": 0.91, "recall": 0.86})
+    assert value == {"precision": 0.91, "recall": 0.86}
+    assert ok is True
+
+
+def test_normalize_metric_dict_drops_unparseable_entries_without_crashing():
+    value, notes, ok = normalize_metric_dict({"accuracy": "92%", "trend": "improving"})
+    assert value == {"accuracy": 0.92}
+    assert ok is False
+    assert "trend" in notes
