@@ -1,13 +1,17 @@
+import io
 from pathlib import Path
+
+import pymupdf
+from PIL import Image
 
 from ai_oversight.parsers.pdf_parser import parse
 
 SAMPLE = Path(__file__).parents[2] / "data" / "samples" / "Sample_Internal_AI_Oversight_Report.pdf"
 
 
-def _key_values_on(doc, page: int) -> dict[str, str]:
+def _key_values_on(doc, page: int) -> dict[str, dict]:
     return {
-        el.content["label"]: el.content["value"]
+        el.content["field_id"]: el.content
         for el in doc.elements
         if el.type == "key_value" and el.page_or_slide == page
     }
@@ -26,9 +30,11 @@ def test_page_2_inventory_fields_are_paired_label_to_value():
 
     fields = _key_values_on(doc, page=2)
 
-    assert fields["01 / Submission ID"] == "AI-INT-2026-041"
-    assert fields["03 / Application name"] == "Settlement Failure Early Warning (SFEW)"
-    assert fields["18 / Risk rating"] == "Inherent HIGH; residual MEDIUM"
+    assert fields["01"]["label"] == "Submission ID"
+    assert fields["01"]["value"] == "AI-INT-2026-041"
+    assert fields["03"]["label"] == "Application name"
+    assert fields["03"]["value"] == "Settlement Failure Early Warning (SFEW)"
+    assert fields["18"]["value"] == "Inherent HIGH; residual MEDIUM"
     assert len(fields) == 22
 
 
@@ -54,3 +60,53 @@ def test_decorative_vector_graphics_on_other_pages_do_not_trigger_a_chart_warnin
     assert not any("page 1" in w for w in warned_pages)
     assert not any("page 2" in w for w in warned_pages)
     assert not any("page 4" in w for w in warned_pages)
+
+
+def test_label_far_from_any_text_is_not_fabricated_into_a_pair(tmp_path):
+    pdf_path = tmp_path / "missing_value.pdf"
+    doc = pymupdf.open()
+    page = doc.new_page()
+    page.insert_text((39, 150), "02 / Legal entity")
+    # a large gap -- this is unrelated narrative text further down the page,
+    # not this field's value
+    page.insert_text((39, 400), "RISK NARRATIVE: model drift observed")
+    doc.save(pdf_path)
+    doc.close()
+
+    parsed = parse(pdf_path)
+
+    assert not any(el.type == "key_value" for el in parsed.elements)
+    texts = {el.raw_text for el in parsed.elements if el.raw_text}
+    assert "02 / Legal entity" in texts
+    assert "RISK NARRATIVE: model drift observed" in texts
+
+
+def test_page_with_no_text_layer_warns_instead_of_crashing(tmp_path):
+    pdf_path = tmp_path / "scanned.pdf"
+    doc = pymupdf.open()
+    page = doc.new_page()
+    page.draw_rect(pymupdf.Rect(10, 10, 100, 100))  # drawing only, no text
+    doc.save(pdf_path)
+    doc.close()
+
+    parsed = parse(pdf_path)
+
+    assert parsed.elements == []
+    assert any("no text layer" in w.lower() or "scanned" in w.lower() for w in parsed.warnings)
+
+
+def test_page_with_raster_image_is_flagged_not_silently_dropped(tmp_path):
+    pdf_path = tmp_path / "with_image.pdf"
+    png_bytes = io.BytesIO()
+    Image.new("RGB", (4, 4), color="red").save(png_bytes, format="PNG")
+
+    doc = pymupdf.open()
+    page = doc.new_page()
+    page.insert_text((39, 150), "unrelated caption")
+    page.insert_image(pymupdf.Rect(39, 200, 139, 300), stream=png_bytes.getvalue())
+    doc.save(pdf_path)
+    doc.close()
+
+    parsed = parse(pdf_path)
+
+    assert any("image" in w.lower() for w in parsed.warnings)

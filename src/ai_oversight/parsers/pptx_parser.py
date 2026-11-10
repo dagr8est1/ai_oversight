@@ -24,6 +24,7 @@ def parse(path: Path | str) -> ParsedDocument:
 
     prs = Presentation(path)
     elements: list[Element] = []
+    warnings: list[str] = []
     for slide_index, slide in enumerate(prs.slides):
         slide_number = slide_index + 1
         shapes = list(_flatten_shapes(slide.shapes))
@@ -34,6 +35,11 @@ def parse(path: Path | str) -> ParsedDocument:
                 elements.append(_table_element(shape, slide_number, len(elements)))
             elif getattr(shape, "has_chart", False):
                 elements.append(_chart_element(shape, slide_number, len(elements)))
+            elif shape.shape_type == MSO_SHAPE_TYPE.PICTURE:
+                warnings.append(
+                    f"slide {slide_number}: picture shape present; image content "
+                    "is not extracted in Phase 1 (would need OCR/vision)"
+                )
             elif shape.has_text_frame and shape.text_frame.text.strip():
                 text_shapes.append(shape)
 
@@ -44,7 +50,7 @@ def parse(path: Path | str) -> ParsedDocument:
         filename=path.name,
         format="pptx",
         elements=elements,
-        warnings=[],
+        warnings=warnings,
     )
 
 
@@ -96,7 +102,7 @@ def _pair_row_shapes(shapes, slide_number: int, id_offset: int) -> list[Element]
         texts = [s.text_frame.text.strip() for s in row]
 
         if len(texts) >= 3 and ROW_ID_PATTERN.match(texts[0]):
-            label, value = texts[1], " ".join(texts[2:])
+            field_id, label, value = texts[0], texts[1], texts[2]
             elements.append(
                 Element(
                     element_id=f"slide{slide_number}.kv{id_offset + len(elements)}",
@@ -104,8 +110,38 @@ def _pair_row_shapes(shapes, slide_number: int, id_offset: int) -> list[Element]
                     page_or_slide=slide_number,
                     bbox=_row_bbox(row),
                     method="pptx_aligned_textbox_row",
-                    content={"label": label, "value": value},
+                    content={"field_id": field_id, "label": label, "value": value},
                     raw_text=value,
+                )
+            )
+            if len(texts) > 3:
+                # extra shapes beyond [id, label, value] belong to a different
+                # column than "value" -- keep them, grouped, instead of either
+                # discarding them or folding them into the value string.
+                elements.append(
+                    Element(
+                        element_id=f"slide{slide_number}.table{id_offset + len(elements)}",
+                        type="table",
+                        page_or_slide=slide_number,
+                        bbox=_row_bbox(row),
+                        method="pptx_aligned_textbox_row_cells",
+                        content={"cells": texts},
+                    )
+                )
+            continue
+
+        if len(texts) >= 2:
+            # no numeric field-ID: still an aligned multi-column row (e.g. a
+            # plain data table's header/data rows) -- keep the cells grouped
+            # rather than scattering them into unlinked text elements.
+            elements.append(
+                Element(
+                    element_id=f"slide{slide_number}.table{id_offset + len(elements)}",
+                    type="table",
+                    page_or_slide=slide_number,
+                    bbox=_row_bbox(row),
+                    method="pptx_aligned_textbox_row_cells",
+                    content={"cells": texts},
                 )
             )
             continue

@@ -7,7 +7,13 @@ import pymupdf
 from ai_oversight.parsers.document_ir import Element, ParsedDocument
 
 # Matches the sample reports' "NN / Label" inventory-field headings, e.g. "01 / Submission ID".
-LABEL_PATTERN = re.compile(r"^\d{2}\s*/\s*.+$")
+LABEL_PATTERN = re.compile(r"^(\d{2})\s*/\s*(.+)$")
+
+# A candidate value block pairs with a pending label only if it starts within
+# this many points of the label's bottom edge. The real sample's label->value
+# gap is ~9pt; anything much larger is unrelated text lower on the page, and
+# pairing it would fabricate a value the document never gave for that field.
+MAX_LABEL_VALUE_GAP = 20.0
 
 # A page is treated as containing a vector-drawn chart when it has at least this
 # many near-zero-height horizontal strokes wider than a stray rule/border --
@@ -28,7 +34,22 @@ def parse(path: Path | str) -> ParsedDocument:
     with pymupdf.open(path) as doc:
         for page_index, page in enumerate(doc):
             page_number = page_index + 1
-            elements.extend(_parse_page_text(page, page_number))
+            page_elements = _parse_page_text(page, page_number)
+            elements.extend(page_elements)
+
+            if not page_elements:
+                warnings.append(
+                    f"page {page_number}: no text layer extracted (likely scanned); "
+                    "OCR was not performed in Phase 1"
+                )
+
+            image_count = len(page.get_images())
+            if image_count:
+                warnings.append(
+                    f"page {page_number}: {image_count} raster image(s) present; "
+                    "image content is not extracted in Phase 1 (would need OCR/vision)"
+                )
+
             warnings.extend(_chart_warnings(page, page_number))
 
     return ParsedDocument(
@@ -70,12 +91,12 @@ def _pair_labels_and_values(
     blocks: list[tuple], page_number: int, id_offset: int
 ) -> list[Element]:
     elements: list[Element] = []
-    pending_label: tuple[str, list[float]] | None = None
+    pending: tuple[str, str, list[float]] | None = None  # (field_id, label, bbox)
 
     def flush_unpaired_label() -> None:
-        if pending_label is None:
+        if pending is None:
             return
-        label_text, label_bbox = pending_label
+        field_id, label, label_bbox = pending
         elements.append(
             Element(
                 element_id=f"page{page_number}.text{id_offset + len(elements)}",
@@ -83,7 +104,7 @@ def _pair_labels_and_values(
                 page_or_slide=page_number,
                 bbox=label_bbox,
                 method="pymupdf_text_block",
-                raw_text=label_text,
+                raw_text=f"{field_id} / {label}",
             )
         )
 
@@ -94,26 +115,34 @@ def _pair_labels_and_values(
             continue
         bbox = [x0, y0, x1, y1]
 
-        if LABEL_PATTERN.match(text):
+        label_match = LABEL_PATTERN.match(text)
+        if label_match:
             flush_unpaired_label()
-            pending_label = (text, bbox)
+            pending = (label_match.group(1), label_match.group(2), bbox)
             continue
 
-        if pending_label is not None:
-            label_text, label_bbox = pending_label
-            elements.append(
-                Element(
-                    element_id=f"page{page_number}.kv{id_offset + len(elements)}",
-                    type="key_value",
-                    page_or_slide=page_number,
-                    bbox=[label_bbox[0], label_bbox[1], bbox[2], bbox[3]],
-                    method="pymupdf_text_block_pair",
-                    content={"label": label_text, "value": text},
-                    raw_text=text,
+        if pending is not None:
+            field_id, label, label_bbox = pending
+            gap = y0 - label_bbox[3]
+            if 0 <= gap <= MAX_LABEL_VALUE_GAP:
+                elements.append(
+                    Element(
+                        element_id=f"page{page_number}.kv{id_offset + len(elements)}",
+                        type="key_value",
+                        page_or_slide=page_number,
+                        bbox=[label_bbox[0], label_bbox[1], bbox[2], bbox[3]],
+                        method="pymupdf_text_block_pair",
+                        content={"field_id": field_id, "label": label, "value": text},
+                        raw_text=text,
+                    )
                 )
-            )
-            pending_label = None
-            continue
+                pending = None
+                continue
+            # too far below the label to be its value -- flush the label
+            # unpaired rather than fabricate a pairing, then fall through to
+            # emit this block as its own plain text element.
+            flush_unpaired_label()
+            pending = None
 
         elements.append(
             Element(
@@ -138,7 +167,7 @@ def _chart_warnings(page, page_number: int) -> list[str]:
         and drawing["rect"].height < GRIDLINE_MAX_HEIGHT
         and drawing["rect"].width > GRIDLINE_MIN_WIDTH
     ]
-    if len(gridlines) >= MIN_GRIDLINES_FOR_CHART and not page.get_images():
+    if len(gridlines) >= MIN_GRIDLINES_FOR_CHART:
         return [
             (
                 f"page {page_number}: vector drawing detected (chart-like); structured "

@@ -48,6 +48,12 @@ def parse(
         typer.echo(f"unsupported file type {document.suffix!r}; supported: {supported}")
         raise typer.Exit(code=1)
 
-    parsed = parser(document)
+    try:
+        parsed = parser(document)
+    except Exception as exc:  # pragma: no cover - exact exception type is parser-dependent
+        typer.echo(f"failed to parse {document}: {exc}", err=True)
+        raise typer.Exit(code=1) from exc
+
+    out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(parsed.model_dump_json(indent=2))
     typer.echo(f"wrote {out} ({len(parsed.elements)} elements, {len(parsed.warnings)} warnings)")
