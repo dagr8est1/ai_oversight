@@ -160,6 +160,11 @@
     outcome — <code>needs_review</code>, <code>ambiguous</code>, <code>conflicting</code>, <code>missing</code> —
     exists so that uncertainty is visible to a human reviewer instead of silently guessed away.
   </p>
+  <p class="lede">
+    Both models — Granite Vision 4.1 4B and Qwen3-4B-Instruct-2507 — are downloaded once from Hugging Face and
+    run entirely on local hardware. There's no API call and no per-token cost to run <code>extract</code>,
+    no matter how many times a document is processed or re-processed.
+  </p>
 </section>
 
 <section id="pipeline">
@@ -355,7 +360,7 @@
     element. Whichever Stage 3 backend runs next never knows the difference between native and vision-recovered content.
   </p>
   <p>
-    Because this stage is slow (a real local vision model), its output can be cached once with the
+    Because this stage is slow (a real local vision model, also free of any API or token cost to run), its output can be cached once with the
     <code>vision</code> CLI command and replayed via <code>extract --vision-cache</code> — Stage 3 can then be
     iterated on repeatedly without re-running Granite.
   </p>
@@ -373,7 +378,7 @@
   </p>
 
   <h3>qwen_local backend — two-pass local LLM</h3>
-  <p>Runs <strong>Qwen3-4B-Instruct-2507</strong> locally (greedy decoding — more on why below) in two passes:</p>
+  <p>Runs <strong>Qwen3-4B-Instruct-2507</strong> locally via Hugging Face <code>transformers</code> — no API, no token cost — (greedy decoding — more on why below) in two passes:</p>
 
   <div class="card">
     <h4>① Main pass — chunked, multi-field</h4>
