@@ -6,7 +6,7 @@ import ai_oversight
 from ai_oversight.config import Settings
 from ai_oversight.extractors import granite_vision, qwen_local, rules
 from ai_oversight.parsers import pdf_parser, pptx_parser
-from ai_oversight.reporting import json_writer, markdown_writer
+from ai_oversight.reporting import csv_writer, json_writer, markdown_writer
 
 app = typer.Typer(help="Local AI-usage-report extraction CLI.")
 
@@ -56,6 +56,22 @@ def _parse_document(document: Path):
     except Exception as exc:  # pragma: no cover - exact exception type is parser-dependent
         typer.echo(f"failed to parse {document}: {exc}", err=True)
         raise typer.Exit(code=1) from exc
+
+
+def _try_parse_document(document: Path):
+    """Like `_parse_document`, but for a batch of files: a single bad file
+    (missing, unsupported type, unparseable) is reported and skipped rather
+    than aborting every other file in the batch."""
+    parser = _PARSERS.get(document.suffix.lower())
+    if parser is None:
+        supported = ", ".join(sorted(_PARSERS))
+        typer.echo(f"skipping {document}: unsupported file type {document.suffix!r}; supported: {supported}", err=True)
+        return None
+    try:
+        return parser(document)
+    except Exception as exc:  # noqa: BLE001 - one bad file must not abort the whole batch
+        typer.echo(f"skipping {document}: failed to parse ({exc})", err=True)
+        return None
 
 
 @app.command()
@@ -165,3 +181,57 @@ def extract(
     review_path = out.with_suffix(".review.md")
     markdown_writer.write(result, review_path)
     typer.echo(f"wrote {out} and {review_path}")
+
+
+@app.command()
+def batch(
+    documents: list[Path] = typer.Argument(..., help="PDF/PPTX reports to extract from."),
+    backend: str = typer.Option("rules", "--backend", help="rules (default, no model) or qwen_local."),
+    vision: bool = typer.Option(
+        None,
+        "--vision",
+        help="Also recover chart/table data Phase 1 could only flag, via Granite Vision. "
+        "Defaults to the AI_OVERSIGHT_VISION_ENABLED env var.",
+    ),
+    out: Path = typer.Option(..., "--out", help="Where to write the combined CSV report."),
+) -> None:
+    """Extract the 22 canonical fields from each of several documents and
+    write one combined CSV: one row per (file, field), with that field's
+    status, value, and confidence. A file that fails to parse or extract is
+    reported and skipped rather than aborting the whole batch."""
+    resolved_vision = Settings.from_env().vision_enabled if vision is None else vision
+
+    backend_fn = _BACKENDS.get(backend)
+    if backend_fn is None:
+        supported = ", ".join(sorted(_BACKENDS))
+        typer.echo(f"unsupported backend {backend!r}; supported: {supported}", err=True)
+        raise typer.Exit(code=1)
+
+    results = []
+    for document in documents:
+        parsed = _try_parse_document(document)
+        if parsed is None:
+            continue
+
+        backend_input = parsed
+        if resolved_vision:
+            backend_input, _vision_observations, vision_warning = granite_vision.enrich_document(
+                document, parsed
+            )
+            if vision_warning:
+                typer.echo(f"{document}: {vision_warning}", err=True)
+
+        try:
+            results.append(backend_fn(backend_input))
+        except Exception as exc:  # noqa: BLE001 - one bad file must not abort the whole batch
+            detail = str(exc)
+            message = f"{type(exc).__name__}: {detail}" if detail else type(exc).__name__
+            typer.echo(f"skipping {document}: extraction failed ({message})", err=True)
+
+    if not results:
+        typer.echo("no file extracted successfully; nothing written", err=True)
+        raise typer.Exit(code=1)
+
+    out.parent.mkdir(parents=True, exist_ok=True)
+    csv_writer.write(results, out)
+    typer.echo(f"wrote {out} ({len(results)} file(s), {len(results) * 22} row(s))")
