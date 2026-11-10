@@ -104,7 +104,12 @@ def extract(
     try:
         result = backend_fn(backend_input)
     except Exception as exc:
-        typer.echo(f"extraction failed: {exc}", err=True)
+        # str(exc) is empty for an argumentless exception (e.g. a bare
+        # `raise AttributeError`) -- always include the type so the message
+        # is never just "extraction failed: "
+        detail = str(exc)
+        message = f"{type(exc).__name__}: {detail}" if detail else type(exc).__name__
+        typer.echo(f"extraction failed: {message}", err=True)
         raise typer.Exit(code=1) from exc
 
     if vision:

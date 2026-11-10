@@ -34,6 +34,26 @@ def test_extract_defaults_to_rules_backend(tmp_path):
     assert result.exit_code == 0, result.stdout
 
 
+def test_extract_failure_message_is_never_blank_even_for_an_argumentless_exception(tmp_path, monkeypatch):
+    # a bare `raise SomeError` (no message) str()s to "" -- f"...: {exc}"
+    # alone then prints a useless blank message. Reproduced for real: a
+    # transformers version mismatch raised a bare AttributeError here and
+    # the CLI showed only "extraction failed: ", no clue what broke.
+    from ai_oversight import cli
+
+    def broken_backend(parsed):
+        raise AttributeError
+
+    monkeypatch.setitem(cli._BACKENDS, "rules", broken_backend)
+    out = tmp_path / "internal.json"
+
+    result = runner.invoke(app, ["extract", str(SAMPLE_PDF), "--backend", "rules", "--out", str(out)])
+
+    assert result.exit_code != 0
+    assert "AttributeError" in result.output
+    assert result.output.strip() != "extraction failed:"
+
+
 def test_extract_rejects_unknown_backend_with_a_friendly_error(tmp_path):
     out = tmp_path / "internal.json"
 
