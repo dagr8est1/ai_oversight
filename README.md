@@ -29,6 +29,27 @@ uv run python -m ai_oversight parse data/samples/Sample_External_AI_Usage_Disclo
 uv run python -m ai_oversight --version
 ```
 
+Extract the 22 canonical fields (plus metrics/incidents/review flags) from the
+IR. The default `rules` backend is deterministic and downloads nothing; it
+maps each document's own numbered field inventory directly to the canonical
+schema. Writes `<out>` and a `<out>.review.md` human-readable summary:
+
+```bash
+uv run python -m ai_oversight extract data/samples/Sample_Internal_AI_Oversight_Report.pdf --out outputs/internal.json
+uv run python -m ai_oversight extract data/samples/Sample_External_AI_Usage_Disclosure.pptx --out outputs/external.json
+```
+
+The `qwen_local` backend instead prompts `Qwen/Qwen3-4B-Instruct-2507` per
+page/slide for semantic field mapping, with a validate-then-retry loop against
+the schema (falls back to `needs_review` rather than fabricating a value) and
+conflict detection across chunks. It requires the `llm` extra and downloads
+the model on first use — nothing is fetched by the test suite:
+
+```bash
+uv sync --extra llm
+uv run python -m ai_oversight extract data/samples/Sample_Internal_AI_Oversight_Report.pdf --backend qwen_local --out outputs/internal.qwen.json
+```
+
 ## Configuration
 
 All settings are environment variables; defaults require no credentials and
@@ -40,6 +61,23 @@ no network access:
 | `AI_OVERSIGHT_TEXT_MODEL` | `Qwen/Qwen3-4B-Instruct-2507` | Phase 2 local text extraction model |
 | `AI_OVERSIGHT_VISION_MODEL` | `ibm-granite/granite-vision-4.1-4b` | Phase 3 optional vision model |
 | `AI_OVERSIGHT_VISION_ENABLED` | `false` | Opt in to vision extraction (Phase 3) |
+
+## Known limitations (Phase 2 — semantic extraction)
+
+- The `rules` backend maps a canonical field only when the source document
+  used the same "NN / Label" numbered-inventory convention as the two
+  samples; a differently structured report would need the `qwen_local`
+  backend (or a new rules heuristic) instead.
+- Conflict detection between a narrative field and a chart compares the
+  chart's *last* period's value against the narrative value — it does not
+  check every historical period for a mismatch.
+- `incidents` is only populated from PPTX aligned-textbox table rows whose
+  first cell looks like a short date (e.g. "Sep 07"); PDF incident narratives
+  stay as the `incident_history` field's free text (see the PDF-table
+  limitation below).
+- `qwen_local`'s retry loop re-prompts on invalid JSON but does not yet use
+  constrained decoding (e.g. `outlines`); if retries prove unreliable in
+  practice, that is the next thing to add, per PLAN.md Section 3.
 
 ## Known limitations (Phase 1 — deterministic parsing only)
 

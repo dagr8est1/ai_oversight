@@ -16,6 +16,7 @@ ai_oversight = "ai_oversight.cli:app"
 
 [project.optional-dependencies]
 docling = ["docling>=2.0.0"]
+llm = ["transformers>=4.45.0", "torch>=2.2.0"]
 
 [dependency-groups]
 dev = [
