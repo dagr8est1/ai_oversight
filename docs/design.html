@@ -312,9 +312,16 @@
       <text class="lbl small" x="440" y="1408">22 FieldValues, each with a</text>
       <text class="lbl small" x="440" y="1424">status + computed confidence</text>
 
-      <polyline class="edge" points="440,1436 440,1466"></polyline>
-      <rect class="box" x="300" y="1466" width="280" height="46" rx="10"></rect>
-      <text class="lbl mono" x="440" y="1494">&lt;out&gt;.json  +  &lt;out&gt;.review.md</text>
+      <text class="lbl small" x="305" y="1450">extract (1 file)</text>
+      <polyline class="edge" points="440,1436 440,1450 350,1450 350,1466"></polyline>
+      <rect class="box" x="220" y="1466" width="260" height="46" rx="10"></rect>
+      <text class="lbl mono" x="350" y="1494">&lt;out&gt;.json + &lt;out&gt;.review.md</text>
+
+      <text class="lbl small" x="690" y="1450">batch (list of files)</text>
+      <polyline class="edge" points="440,1436 440,1450 690,1450 690,1466"></polyline>
+      <rect class="box" x="520" y="1466" width="340" height="62" rx="10"></rect>
+      <text class="lbl" x="690" y="1488">combined report (per file × field)</text>
+      <text class="lbl mono" x="690" y="1506">CSV (default) or HTML (--out *.html)</text>
     </svg>
   </div>
   <p class="lede" style="font-size:0.82rem">
@@ -528,6 +535,15 @@ confidence = floor + (ceiling - floor) * corroboration</div>
       The full pipeline, Stage 3 reading from a saved vision cache instead of re-running Granite. Writes
       <code>result.json</code> and <code>result.review.md</code>. Drop <code>--vision-cache</code> and add
       <code>--vision</code> to run Granite live instead; drop both to skip Stage 2 entirely.
+    </p>
+  </div>
+  <div class="card" style="margin-top:0.8rem">
+    <h4><code>ai_oversight batch &lt;file1&gt; &lt;file2&gt; ... --backend qwen_local --out report.html</code></h4>
+    <p style="margin:0">
+      The same pipeline run independently over several documents, combined into one report: one row per
+      (file, field), with that field's status, value, and confidence. Written as CSV, or as a styled HTML
+      report when <code>--out</code> ends in <code>.html</code> — no extra flag needed. A file that fails to
+      parse or extract is reported and skipped rather than aborting the whole batch.
     </p>
   </div>
 </section>
