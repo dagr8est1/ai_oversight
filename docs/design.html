@@ -172,7 +172,7 @@
   </p>
 
   <div class="diagram-frame">
-    <svg viewBox="0 0 840 1540" width="840" height="1540" role="img" aria-label="Flowchart of the three-stage extraction pipeline">
+    <svg viewBox="0 0 900 1540" width="900" height="1540" role="img" aria-label="Flowchart of the three-stage extraction pipeline">
       <defs>
         <marker id="arrow" markerWidth="9" markerHeight="9" refX="7" refY="4" orient="auto">
           <path d="M0,0 L8,4 L0,8 Z" fill="var(--fg-muted)"></path>
@@ -241,7 +241,7 @@
       <text class="lbl" x="380" y="736">Choose backend: rules | qwen_local</text>
 
       <polyline class="edge" points="310,758 310,796"></polyline>
-      <polyline class="edge" points="450,758 450,796"></polyline>
+      <polyline class="edge" points="470,758 470,796"></polyline>
 
       <!-- rules branch -->
       <rect class="box" x="190" y="796" width="240" height="68" rx="10"></rect>
@@ -250,41 +250,41 @@
       <text class="lbl small" x="310" y="854">no model — deterministic</text>
 
       <!-- qwen branch -->
-      <rect class="box" x="340" y="796" width="330" height="46" rx="10"></rect>
-      <text class="lbl" x="505" y="824">qwen_local backend (two passes)</text>
+      <rect class="box" x="450" y="796" width="330" height="46" rx="10"></rect>
+      <text class="lbl" x="615" y="824">qwen_local backend (two passes)</text>
 
-      <polyline class="edge" points="505,842 505,876"></polyline>
-      <rect class="box" x="360" y="876" width="290" height="80" rx="10"></rect>
-      <text class="lbl" x="505" y="898">Main pass</text>
-      <text class="lbl small" x="505" y="916">chunk ≤5 elements/page;</text>
-      <text class="lbl small" x="505" y="932">match all 22 fields at once</text>
-      <text class="lbl mono" x="505" y="948">_chunk_by_page / _build_prompt</text>
+      <polyline class="edge" points="615,842 615,876"></polyline>
+      <rect class="box" x="470" y="876" width="290" height="80" rx="10"></rect>
+      <text class="lbl" x="615" y="898">Main pass</text>
+      <text class="lbl small" x="615" y="916">chunk ≤5 elements/page;</text>
+      <text class="lbl small" x="615" y="932">match all 22 fields at once</text>
+      <text class="lbl mono" x="615" y="948">_chunk_by_page / _build_prompt</text>
 
-      <polyline class="edge" points="505,956 505,990"></polyline>
-      <rect class="box" x="360" y="990" width="290" height="62" rx="10"></rect>
-      <text class="lbl small" x="505" y="1012">Merge: verify each citation</text>
-      <text class="lbl small" x="505" y="1028">against its source; resolve conflicts</text>
-      <text class="lbl mono" x="505" y="1044">_build_evidence / _resolve_field_candidates</text>
+      <polyline class="edge" points="615,956 615,990"></polyline>
+      <rect class="box" x="470" y="990" width="290" height="62" rx="10"></rect>
+      <text class="lbl small" x="615" y="1012">Merge: verify each citation</text>
+      <text class="lbl small" x="615" y="1028">against its source; resolve conflicts</text>
+      <text class="lbl mono" x="615" y="1044">_build_evidence / _resolve_field_candidates</text>
 
-      <polyline class="edge" points="505,1052 505,1082"></polyline>
-      <polygon class="diamond" points="505,1082 605,1124 505,1166 405,1124"></polygon>
-      <text class="lbl small" x="505" y="1118">Any field still</text>
-      <text class="lbl small" x="505" y="1134">"missing"?</text>
+      <polyline class="edge" points="615,1052 615,1082"></polyline>
+      <polygon class="diamond" points="615,1082 715,1124 615,1166 515,1124"></polygon>
+      <text class="lbl small" x="615" y="1118">Any field still</text>
+      <text class="lbl small" x="615" y="1134">"missing"?</text>
 
       <!-- yes: second pass, then loop back to re-check this same decision -->
-      <text class="lbl small" x="665" y="1112">yes</text>
-      <polyline class="edge dash" points="605,1124 700,1124 700,1200"></polyline>
-      <rect class="box" x="560" y="1200" width="240" height="86" rx="10"></rect>
-      <text class="lbl" x="680" y="1222">Second pass</text>
-      <text class="lbl small" x="680" y="1240">per missing field × whole page;</text>
-      <text class="lbl small" x="680" y="1256">tentative table citations allowed</text>
-      <text class="lbl mono" x="680" y="1272">_second_pass_missing_fields</text>
-      <text class="lbl small" x="585" y="1306">re-merge (same rules)</text>
-      <polyline class="edge dash" points="680,1286 680,1310 505,1310 505,1166"></polyline>
+      <text class="lbl small" x="740" y="1112">yes</text>
+      <polyline class="edge dash" points="715,1124 765,1124 765,1200"></polyline>
+      <rect class="box" x="655" y="1200" width="220" height="86" rx="10"></rect>
+      <text class="lbl" x="765" y="1222">Second pass</text>
+      <text class="lbl small" x="765" y="1240">per missing field × whole page;</text>
+      <text class="lbl small" x="765" y="1256">tentative table citations allowed</text>
+      <text class="lbl mono" x="765" y="1272">_second_pass_missing_fields</text>
+      <text class="lbl small" x="690" y="1302">re-merge (same rules)</text>
+      <polyline class="edge dash" points="765,1286 765,1310 615,1310 615,1166"></polyline>
 
       <!-- no: feeds into the output trunk below -->
-      <text class="lbl small" x="350" y="1112">no</text>
-      <polyline class="edge" points="405,1124 310,1124"></polyline>
+      <text class="lbl small" x="420" y="1112">no</text>
+      <polyline class="edge" points="515,1124 310,1124"></polyline>
 
       <!-- output trunk: both the rules branch and the resolved qwen branch join here -->
       <polyline class="edge" points="310,864 310,1340 440,1340 440,1366"></polyline>
