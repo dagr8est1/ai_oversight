@@ -25,6 +25,8 @@ def test_extract_uses_valid_first_response_without_retrying():
     calls = []
 
     def fake_generate(prompt: str) -> str:
+        if "ONE specific structured field" in prompt:
+            return '{"value": null}'  # second-pass call for some other missing field
         calls.append(prompt)
         return '{"submission_id": {"value": "AI-INT-2026-041", "element_id": "page1.text0"}}'
 
@@ -48,6 +50,8 @@ def test_extract_retries_once_on_invalid_json_then_succeeds():
     )
 
     def fake_generate(prompt: str) -> str:
+        if "ONE specific structured field" in prompt:
+            return '{"value": null}'  # second-pass call for some other missing field
         return next(responses)
 
     doc = _doc_with_one_page("01 / Submission ID\nAI-INT-2026-041")
@@ -137,6 +141,8 @@ def test_extract_flags_conflicting_values_across_chunks():
     )
 
     def fake_generate(prompt: str) -> str:
+        if "ONE specific structured field" in prompt:
+            return '{"value": null}'  # second-pass call for some other missing field
         return next(responses)
 
     doc = ParsedDocument(
@@ -199,6 +205,8 @@ def test_prompt_warns_that_a_wide_table_is_a_record_list_not_a_field_value():
     captured_prompts = []
 
     def fake_generate(prompt: str) -> str:
+        if "ONE specific structured field" in prompt:
+            return '{"value": null}'  # second-pass calls for the other missing fields
         captured_prompts.append(prompt)
         return "{}"
 
@@ -320,6 +328,124 @@ def test_a_page_with_many_candidates_is_split_into_smaller_chunks():
     # each individual chunk's prompt has only a subset of the 12 labels,
     # not every one of them crammed into a single call
     assert not all(f"LABEL {i}" in captured_prompts[0] for i in range(12))
+
+
+def test_second_pass_recovers_a_field_the_main_pass_missed():
+    # found via a real end-to-end run: `submission_id` stayed `missing`
+    # even after the main pass was chunked down to 5 elements per call --
+    # it was still competing for output budget against every other field
+    # mentioned in its chunk. A second, single-field-focused pass over the
+    # whole page should be able to recover it.
+    calls = []
+
+    def fake_generate(prompt: str) -> str:
+        calls.append(prompt)
+        if "ONE specific structured field" in prompt:
+            if "field is: submission_id" in prompt:
+                return '{"value": "AI-INT-2026-041", "element_id": "page1.text0"}'
+            return '{"value": null}'
+        return "{}"  # the main pass misses every field on this chunk
+
+    doc = _doc_with_one_page("01 / Submission ID\nAI-INT-2026-041")
+    result = qwen_local.extract(doc, generate_fn=fake_generate)
+
+    field = result.fields["submission_id"]
+    assert field.value == "AI-INT-2026-041"
+    assert field.status == "extracted"
+    assert len(calls) > 1
+
+
+def test_second_pass_skips_fields_the_main_pass_already_extracted():
+    captured_second_pass_prompts = []
+
+    def fake_generate(prompt: str) -> str:
+        if "ONE specific structured field" in prompt:
+            captured_second_pass_prompts.append(prompt)
+            return '{"value": null}'
+        return '{"submission_id": {"value": "AI-1", "element_id": "page1.text0"}}'
+
+    doc = _doc_with_one_page("01 / Submission ID\nAI-1")
+    result = qwen_local.extract(doc, generate_fn=fake_generate)
+
+    assert result.fields["submission_id"].status == "extracted"
+    assert not any("field is: submission_id" in p for p in captured_second_pass_prompts)
+
+
+def test_second_pass_leaves_a_field_missing_when_no_page_states_it():
+    def fake_generate(prompt: str) -> str:
+        if "ONE specific structured field" in prompt:
+            return '{"value": null}'
+        return "{}"
+
+    doc = _doc_with_one_page("nothing relevant here")
+    result = qwen_local.extract(doc, generate_fn=fake_generate)
+
+    assert result.fields["submission_id"].status == "missing"
+
+
+def test_second_pass_citation_from_a_table_type_element_is_not_confidently_extracted():
+    # the structural table-citation check must apply equally in the
+    # second pass, not just the main one
+    def fake_generate(prompt: str) -> str:
+        if "ONE specific structured field" in prompt:
+            if "field is: fallback_process" in prompt:
+                return '{"value": "Manual fallback drill", "element_id": "page4.table0"}'
+            return '{"value": null}'
+        return "{}"
+
+    doc = ParsedDocument(
+        document_id="sha256:x",
+        filename="x.pdf",
+        format="pdf",
+        elements=[
+            Element(
+                element_id="page4.table0",
+                type="table",
+                page_or_slide=4,
+                method="granite_vision_tables_json",
+                content={
+                    "rows": [
+                        ["CONTROLID", "MITIGATION"],
+                        ["C-01", "Human authorization"],
+                        ["C-02", "Manual fallback drill"],
+                    ]
+                },
+            )
+        ],
+    )
+
+    result = qwen_local.extract(doc, generate_fn=fake_generate)
+
+    field = result.fields["fallback_process"]
+    assert field.value == "Manual fallback drill"
+    assert field.status == "needs_review"
+
+
+def test_second_pass_prompt_includes_the_whole_page_not_a_5_element_slice():
+    captured_second_pass_prompts = []
+
+    def fake_generate(prompt: str) -> str:
+        if "ONE specific structured field" in prompt:
+            captured_second_pass_prompts.append(prompt)
+            return '{"value": null}'
+        return "{}"
+
+    elements = [
+        Element(
+            element_id=f"page1.kv{i}",
+            type="key_value",
+            page_or_slide=1,
+            method="m",
+            content={"label": f"LABEL {i}", "value": f"VALUE {i}"},
+        )
+        for i in range(12)
+    ]
+    doc = ParsedDocument(document_id="sha256:x", filename="x.pdf", format="pdf", elements=elements)
+
+    qwen_local.extract(doc, generate_fn=fake_generate)
+
+    assert captured_second_pass_prompts
+    assert any(all(f"LABEL {i}" in p for i in range(12)) for p in captured_second_pass_prompts)
 
 
 def test_metrics_incidents_and_document_type_come_from_the_ir_not_the_model():

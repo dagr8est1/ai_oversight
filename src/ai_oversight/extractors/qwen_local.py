@@ -91,6 +91,7 @@ def extract(
             )
 
     fields, review_flags = _merge_candidates(candidates, ambiguous_signaled, failed_chunks)
+    fields = _second_pass_missing_fields(doc, fields, generate_fn)
 
     metrics, metric_warnings = collect_metrics(doc.elements)
     conflict_flags = detect_performance_conflicts(fields, metrics)
@@ -172,7 +173,11 @@ def _build_evidence(
 MAX_ELEMENTS_PER_CHUNK = 5
 
 
-def _chunk_by_page(doc: ParsedDocument) -> list[_Chunk]:
+def _full_page_chunks(doc: ParsedDocument) -> list[_Chunk]:
+    """One chunk per page/slide with every one of its elements -- the basis
+    both `_chunk_by_page` splits down from (for the main, multi-field pass)
+    and the second pass uses whole, since a single-field prompt has no
+    multi-field output budget to protect by splitting further."""
     by_page: dict[int, list[Element]] = defaultdict(list)
     for element in doc.elements:
         by_page[element.page_or_slide].append(element)
@@ -180,16 +185,31 @@ def _chunk_by_page(doc: ParsedDocument) -> list[_Chunk]:
     chunks = []
     for page in sorted(by_page):
         kept = [el for el in by_page[page] if _element_text(el)]
-        for group in _batched(kept, MAX_ELEMENTS_PER_CHUNK):
-            element_texts = {el.element_id: _element_text(el) for el in group}
-            element_types = {el.element_id: el.type for el in group}
+        if not kept:
+            continue
+        element_texts = {el.element_id: _element_text(el) for el in kept}
+        element_types = {el.element_id: el.type for el in kept}
+        chunks.append(_Chunk(page_or_slide=page, element_texts=element_texts, element_types=element_types))
+    return chunks
+
+
+def _chunk_by_page(doc: ParsedDocument) -> list[_Chunk]:
+    chunks = []
+    for full_chunk in _full_page_chunks(doc):
+        for group in _batched(list(full_chunk.element_texts.items()), MAX_ELEMENTS_PER_CHUNK):
+            element_texts = dict(group)
+            element_types = {element_id: full_chunk.element_types[element_id] for element_id, _ in group}
             chunks.append(
-                _Chunk(page_or_slide=page, element_texts=element_texts, element_types=element_types)
+                _Chunk(
+                    page_or_slide=full_chunk.page_or_slide,
+                    element_texts=element_texts,
+                    element_types=element_types,
+                )
             )
     return chunks
 
 
-def _batched(items: list[Element], size: int) -> list[list[Element]]:
+def _batched(items: list[tuple[str, str]], size: int) -> list[list[tuple[str, str]]]:
     return [items[i : i + size] for i in range(0, len(items), size)]
 
 
@@ -322,33 +342,151 @@ def _merge_candidates(
             fields[name] = _field_with_no_candidates(name, ambiguous_signaled, failed_chunks)
             continue
 
-        distinct_values = {_stable_key(c.value) for c in entries}
-        evidence = [c.evidence for c in entries]
-        if len(distinct_values) > 1:
-            fields[name] = FieldValue(value=entries[0].value, status="conflicting", evidence=evidence)
+        field, conflicting_count = _resolve_field_candidates(name, entries)
+        fields[name] = field
+        if conflicting_count:
             review_flags.append(
                 ReviewFlag(
                     code="multiple_candidate_values",
                     field=name,
-                    message=f"{len(distinct_values)} differing candidate values found across chunks",
+                    message=f"{conflicting_count} differing candidate values found across chunks",
                 )
             )
-            continue
 
-        if not any(c.substantiated for c in entries):
-            fields[name] = FieldValue(
+    return fields, review_flags
+
+
+def _resolve_field_candidates(name: str, entries: list[_Candidate]) -> tuple[FieldValue, int]:
+    """Shared by the main pass's per-field merge and the second pass's
+    per-page candidates for one field: same conflict/substantiation/
+    normalization rules either way. Returns (field, distinct_value_count)
+    -- distinct_value_count is only >1 (and worth a review flag) when
+    candidates disagree; 0/1 both mean "no conflict"."""
+    distinct_values = {_stable_key(c.value) for c in entries}
+    evidence = [c.evidence for c in entries]
+    if len(distinct_values) > 1:
+        return FieldValue(value=entries[0].value, status="conflicting", evidence=evidence), len(distinct_values)
+
+    if not any(c.substantiated for c in entries):
+        return (
+            FieldValue(
                 value=entries[0].value,
                 status="needs_review",
                 evidence=evidence,
                 normalization_notes="model's citation could not be verified against source text",
-            )
+            ),
+            0,
+        )
+
+    value, status, notes = normalize_value(name, entries[0].value)
+    field = FieldValue(value=value, status=status, evidence=evidence, normalization_notes=notes)
+    return validate_field_shape(name, field), 0
+
+
+# A field that came back `missing` after the main chunked pass competed for
+# output budget against every other field mentioned in every chunk it
+# appeared in -- found via a real run where `submission_id` stayed missing
+# even once chunks were capped at 5 elements. Asking about exactly one
+# missing field at a time, with the whole page as context (not a further
+# sub-chunk -- a single-field prompt has no multi-field budget to protect),
+# removes that competition. This only runs for whatever few fields the main
+# pass didn't already resolve, at the cost of one extra call per
+# (missing field, page) pair.
+def _second_pass_missing_fields(
+    doc: ParsedDocument, fields: dict[str, FieldValue], generate_fn: GenerateFn
+) -> dict[str, FieldValue]:
+    missing = [name for name in CANONICAL_FIELDS if fields[name].status == "missing"]
+    if not missing:
+        return fields
+
+    pages = _full_page_chunks(doc)
+    for field_name in missing:
+        candidates: list[_Candidate] = []
+        for chunk in pages:
+            parsed, raw_response, ok = _extract_single_field(field_name, chunk, generate_fn)
+            if not ok or parsed is None:
+                continue
+            value, element_id = _unpack_field_entry(parsed)
+            if value is None:
+                continue
+            evidence, substantiated = _build_evidence(chunk, element_id, raw_response, value)
+            candidates.append(_Candidate(value=value, evidence=evidence, substantiated=substantiated))
+
+        if candidates:
+            fields[field_name], _ = _resolve_field_candidates(field_name, candidates)
+
+    return fields
+
+
+def _build_single_field_prompt(
+    field_name: str,
+    chunk: _Chunk,
+    previous_error: str | None = None,
+    previous_response: str | None = None,
+) -> str:
+    excerpt = "\n".join(f"[{element_id}] {text}" for element_id, text in chunk.element_texts.items())
+    base = (
+        "You extract ONE specific structured field from an AI-governance report excerpt. "
+        f"The field is: {field_name} -- {CANONICAL_FIELD_DESCRIPTIONS[field_name]}.\n"
+        'Respond with ONLY a JSON object: {"value": ..., "element_id": "..."}. '
+        "element_id must be one of the bracketed IDs below, the one that actually "
+        "states the value. Never invent a value not stated in the excerpt. If this "
+        'excerpt does not state this field, respond with {"value": null}. '
+        "Content marked [TABLE of repeated records, not a single document-level fact] lists "
+        "multiple instances of the same kind of thing (e.g. several different controls, "
+        "incidents, or risks) -- one row or cell from it describes only that one instance, "
+        "never the whole document. Do not use a value from inside such a table for this "
+        "field unless the excerpt's own wording states it applies document-wide, not just "
+        "to one row.\n\n"
+        f"Excerpt (page/slide {chunk.page_or_slide}):\n{excerpt}\n"
+    )
+    if previous_error is not None:
+        base += (
+            f"\nYour previous response was invalid: {previous_error}\n"
+            f"Previous response was:\n{previous_response}\n"
+            "Respond again with ONLY a valid JSON object.\n"
+        )
+    return base
+
+
+def _is_plausible_single_field_response(candidate: Any) -> bool:
+    return isinstance(candidate, dict) and "value" in candidate
+
+
+def _parse_single_field_response(response: str) -> tuple[dict[str, Any] | None, str | None]:
+    decoder = json.JSONDecoder()
+    last_valid: dict[str, Any] | None = None
+    last_valid_end = 0
+    for index, char in enumerate(response):
+        if char != "{" or index < last_valid_end:
             continue
+        try:
+            candidate, end = decoder.raw_decode(response, index)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(candidate, dict) and _is_plausible_single_field_response(candidate):
+            last_valid = candidate
+            last_valid_end = end
+    if last_valid is None:
+        return None, 'no JSON object with a "value" key found in response'
+    return last_valid, None
 
-        value, status, notes = normalize_value(name, entries[0].value)
-        field = FieldValue(value=value, status=status, evidence=evidence, normalization_notes=notes)
-        fields[name] = validate_field_shape(name, field)
 
-    return fields, review_flags
+def _extract_single_field(
+    field_name: str, chunk: _Chunk, generate_fn: GenerateFn
+) -> tuple[dict[str, Any] | None, str, bool]:
+    prompt = _build_single_field_prompt(field_name, chunk)
+    response = ""
+    for attempt in range(MAX_ATTEMPTS):
+        response = generate_fn(prompt)
+        parsed, error = _parse_single_field_response(response)
+        if parsed is not None:
+            return parsed, response, True
+        if attempt + 1 < MAX_ATTEMPTS:
+            prompt = _build_single_field_prompt(
+                field_name, chunk, previous_error=error, previous_response=response
+            )
+    return None, response, False
 
 
 def _field_with_no_candidates(
