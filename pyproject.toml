@@ -17,6 +17,7 @@ ai_oversight = "ai_oversight.cli:app"
 [project.optional-dependencies]
 docling = ["docling>=2.0.0"]
 llm = ["transformers>=4.45.0", "torch>=2.2.0"]
+vision = ["mlx-vlm>=0.1.0; platform_system == 'Darwin'", "transformers>=4.45.0", "torch>=2.2.0", "pillow>=10.0.0"]
 
 [dependency-groups]
 dev = [

@@ -3,7 +3,7 @@ from pathlib import Path
 import typer
 
 import ai_oversight
-from ai_oversight.extractors import qwen_local, rules
+from ai_oversight.extractors import granite_vision, qwen_local, rules
 from ai_oversight.parsers import pdf_parser, pptx_parser
 from ai_oversight.reporting import json_writer, markdown_writer
 
@@ -74,6 +74,9 @@ def parse(
 def extract(
     document: Path = typer.Argument(..., exists=True, help="PDF or PPTX report to extract from."),
     backend: str = typer.Option("rules", "--backend", help="rules (default, no model) or qwen_local."),
+    vision: bool = typer.Option(
+        False, "--vision", help="Also recover chart/table data Phase 1 could only flag, via Granite Vision."
+    ),
     out: Path = typer.Option(..., "--out", help="Where to write the extraction result JSON."),
 ) -> None:
     """Extract the 22 canonical fields, writing <out> and a <out>.review.md summary."""
@@ -90,6 +93,9 @@ def extract(
     except Exception as exc:
         typer.echo(f"extraction failed: {exc}", err=True)
         raise typer.Exit(code=1) from exc
+
+    if vision:
+        result = granite_vision.apply_to_result(document, parsed, result)
 
     out.parent.mkdir(parents=True, exist_ok=True)
     json_writer.write(result, out)

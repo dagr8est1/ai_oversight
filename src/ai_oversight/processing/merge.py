@@ -58,7 +58,7 @@ def infer_document_type(filename: str) -> str:
     return "unknown"
 
 
-def _normalize_metric_key(name: str) -> str:
+def normalize_metric_key(name: str) -> str:
     key = re.sub(r"[^a-z0-9]+", "_", name.strip().lower())
     return key.strip("_")
 
@@ -78,7 +78,7 @@ def collect_metrics(elements: list[Element]) -> tuple[list[MetricObservation], l
         content = element.content or {}
         categories = content.get("categories", [])
         for series in content.get("series", []):
-            name = _normalize_metric_key(series.get("name", ""))
+            name = normalize_metric_key(series.get("name", ""))
             for period, raw_value in zip(categories, series.get("values", []), strict=False):
                 if raw_value is None:
                     warnings.append(

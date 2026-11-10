@@ -51,3 +51,17 @@ def test_extract_qwen_local_without_llm_extra_gives_a_friendly_error(tmp_path):
     assert result.exit_code != 0
     assert "llm" in result.output.lower()
     assert "Traceback" not in result.output
+
+
+def test_extract_vision_without_vision_extra_degrades_to_a_warning_not_a_crash(tmp_path):
+    # no vision model installed in this environment -- --vision must still
+    # produce a usable (if vision-less) result, per PLAN.md Phase 3's
+    # "provide a no-VLM result for constrained Macs with needs_review warnings"
+    out = tmp_path / "internal.json"
+
+    result = runner.invoke(app, ["extract", str(SAMPLE_PDF), "--vision", "--out", str(out)])
+
+    assert result.exit_code == 0, result.stdout
+    data = json.loads(out.read_text())
+    assert data["fields"]["submission_id"]["value"] == "AI-INT-2026-041"
+    assert any("vision" in w.lower() for w in data["extraction_warnings"])

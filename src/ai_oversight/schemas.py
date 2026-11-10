@@ -71,6 +71,16 @@ class ReviewFlag(BaseModel):
     kind: Literal["rule_generated_suggestion"] = "rule_generated_suggestion"
 
 
+class VisionObservation(BaseModel):
+    task: Literal["chart2csv", "tables_json"]
+    source_element_id: str | None = None
+    page_or_slide: int
+    raw_response: str
+    parsed: Any | None = None
+    status: Literal["ok", "needs_review"]
+    note: str | None = None
+
+
 class ExtractionResult(BaseModel):
     document_id: str
     source_file: str

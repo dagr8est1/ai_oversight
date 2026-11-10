@@ -50,6 +50,22 @@ uv sync --extra llm
 uv run python -m ai_oversight extract data/samples/Sample_Internal_AI_Oversight_Report.pdf --backend qwen_local --out outputs/internal.qwen.json
 ```
 
+Add `--vision` to recover chart/table content Phase 1 could only flag (e.g.
+the PDF's vector-drawn monthly performance chart), using
+`ibm-granite/granite-vision-4.1-4b` via `<chart2csv>`/`<tables_json>`. It
+cross-checks the recovered numbers against the narrative value already
+extracted and flags (never silently resolves) a disagreement, via the same
+conflict detector Phase 2 uses for native charts. Native chart/table data
+(e.g. the PPTX's slide-5 chart) never needs vision — Phase 1 already
+extracted it exactly. Requires the `vision` extra; without it, `--vision`
+degrades to an extraction warning rather than failing the whole command, so
+it's safe to try on a constrained Mac:
+
+```bash
+uv sync --extra vision
+uv run python -m ai_oversight extract data/samples/Sample_Internal_AI_Oversight_Report.pdf --vision --out outputs/internal.vision.json
+```
+
 ## Configuration
 
 All settings are environment variables; defaults require no credentials and
@@ -61,6 +77,23 @@ no network access:
 | `AI_OVERSIGHT_TEXT_MODEL` | `Qwen/Qwen3-4B-Instruct-2507` | Phase 2 local text extraction model |
 | `AI_OVERSIGHT_VISION_MODEL` | `ibm-granite/granite-vision-4.1-4b` | Phase 3 optional vision model |
 | `AI_OVERSIGHT_VISION_ENABLED` | `false` | Opt in to vision extraction (Phase 3) |
+
+## Known limitations (Phase 3 — vision extraction)
+
+- `build_default_vision_fn`'s real model-loading code (mlx-vlm on Apple
+  Silicon, transformers elsewhere) is implemented but unverified by an
+  actual run in this session — the `vision` extra and its ~8GB weights were
+  deliberately not downloaded. All routing, cropping, and defensive-parsing
+  logic is tested via an injected fake vision call instead.
+- PDF chart cropping renders the *whole page*'s gridline-cluster region at
+  2x zoom; it does not yet try multiple crop sizes if the model misreads a
+  cramped legend or axis label.
+- A PPTX picture shape is always routed to `<tables_json>`, never
+  `<chart2csv>` — there's no signal in a bare picture shape to tell which
+  task fits, and neither real sample contains one (only the unit tests do).
+- Vision-recovered metrics are cross-checked only against the single
+  already-extracted narrative value for `model_performance`, the same
+  one-field scope as Phase 2's native-chart conflict check.
 
 ## Known limitations (Phase 2 — semantic extraction)
 
