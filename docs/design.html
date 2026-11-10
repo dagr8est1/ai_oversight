@@ -220,9 +220,9 @@
       <text class="lbl small" x="380" y="320">Any page/slide only a</text>
       <text class="lbl small" x="380" y="336">chart image, scan, or picture?</text>
 
-      <!-- No branch: straight down the left margin, into the left side of Stage 3's entry box -->
+      <!-- No branch: straight down the left margin, converging into the backend-choice diamond's apex -->
       <text class="lbl small" x="135" y="318">no</text>
-      <polyline class="edge dash" points="260,330 120,330 120,660 365,660 365,706"></polyline>
+      <polyline class="edge dash" points="260,330 120,330 120,660 390,660 390,700"></polyline>
 
       <!-- Yes branch: Stage 2 -->
       <text class="lbl small" x="580" y="318">yes</text>
@@ -238,16 +238,19 @@
       <text class="lbl small" x="620" y="522">Repair truncated JSON;</text>
       <text class="lbl small" x="620" y="538">merge recovered rows into IR</text>
 
-      <!-- converges into the right side of Stage 3's entry box, offset from the no-branch's arrival point -->
-      <polyline class="edge" points="620,556 620,660 395,660 395,706"></polyline>
+      <!-- converges into the same apex as the no-branch -->
+      <polyline class="edge" points="620,556 620,660 390,660 390,700"></polyline>
 
-      <!-- Stage 3 entry -->
-      <text class="tag" x="380" y="700">STAGE 3 · field mapping</text>
-      <rect class="box stage3" x="230" y="706" width="300" height="52" rx="10"></rect>
-      <text class="lbl" x="380" y="736">Choose backend: rules | qwen_local</text>
+      <!-- Stage 3 entry: a genuine decision -- rules.py never imports or
+           calls qwen_local at all, and exactly one backend runs, never both -->
+      <text class="tag" x="390" y="686">STAGE 3 · field mapping</text>
+      <polygon class="diamond" points="390,700 470,732 390,764 310,732"></polygon>
+      <text class="lbl small" x="390" y="736">Which backend?</text>
 
-      <polyline class="edge" points="310,758 310,796"></polyline>
-      <polyline class="edge" points="470,758 470,796"></polyline>
+      <text class="lbl small" x="270" y="780">rules</text>
+      <text class="lbl small" x="510" y="780">qwen_local</text>
+      <polyline class="edge" points="310,732 310,796"></polyline>
+      <polyline class="edge" points="470,732 470,796"></polyline>
 
       <!-- rules branch -->
       <rect class="box" x="190" y="796" width="240" height="68" rx="10"></rect>
