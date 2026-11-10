@@ -8,3 +8,11 @@ default:
 venv:
     uv venv
     uv sync
+
+# Run the test suite
+test:
+    uv run pytest
+
+# Lint the codebase
+lint:
+    uv run ruff check .
