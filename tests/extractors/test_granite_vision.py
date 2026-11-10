@@ -149,6 +149,57 @@ def test_apply_to_result_adds_a_warning_instead_of_crashing_when_model_unavailab
     assert any("vision" in w.lower() for w in updated.extraction_warnings)
 
 
+def test_run_vision_pass_targets_a_fully_scanned_pdf_page_with_no_chart(tmp_path):
+    # a page with no text layer and no vector-drawn chart (a scanned page,
+    # e.g. the whole page rendered as one raster image) must still be routed
+    # to vision -- it just can't be routed via the gridline-chart heuristic,
+    # since there's no vector content to detect at all
+    import io
+
+    import pymupdf
+    from PIL import Image
+
+    pdf_path = tmp_path / "scanned.pdf"
+    doc = pymupdf.open()
+    page = doc.new_page()
+    png_bytes = io.BytesIO()
+    Image.new("RGB", (100, 100), color="red").save(png_bytes, format="PNG")
+    page.insert_image(pymupdf.Rect(0, 0, 100, 100), stream=png_bytes.getvalue())
+    doc.save(pdf_path)
+    doc.close()
+
+    def fake_vision(image_bytes: bytes, task: str) -> str:
+        assert task == "<tables_json>"
+        return '[{"Field": "Submission ID", "Value": "AI-1"}]'
+
+    parsed_doc = ParsedDocument(document_id="sha256:x", filename="scanned.pdf", format="pdf", elements=[])
+    observations = granite_vision.run_vision_pass(pdf_path, parsed_doc, fake_vision)
+
+    assert len(observations) == 1
+    assert observations[0].task == "tables_json"
+    assert observations[0].page_or_slide == 1
+    assert observations[0].parsed == [{"Field": "Submission ID", "Value": "AI-1"}]
+
+
+def test_run_vision_pass_does_not_double_route_a_page_that_has_both_a_chart_and_an_image():
+    # a page with a detected vector chart is routed via chart2csv already;
+    # it must not ALSO be routed again as a "scanned page" just because it
+    # happens to have an unrelated image (e.g. a logo) elsewhere on it
+    calls = []
+
+    def fake_vision(image_bytes: bytes, task: str) -> str:
+        calls.append(task)
+        return "Month,Precision\nJul,0.89\n"
+
+    doc = ParsedDocument(document_id="sha256:x", filename=SAMPLE_PDF.name, format="pdf", elements=[])
+    observations = granite_vision.run_vision_pass(SAMPLE_PDF, doc, fake_vision)
+
+    # page 3 (the chart page) also has no images, so this just re-confirms
+    # exactly one observation and no accidental double-routing
+    assert len(observations) == 1
+    assert calls == ["<chart2csv>"]
+
+
 def test_run_vision_pass_targets_pptx_picture_shapes(tmp_path):
     prs = Presentation()
     slide = prs.slides.add_slide(prs.slide_layouts[6])

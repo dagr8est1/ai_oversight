@@ -101,19 +101,37 @@ def _run_pdf_vision(document_path: Path, vision_fn: VisionFn) -> list[VisionObse
     observations = []
     with pymupdf.open(document_path) as pdf:
         for page_index, page in enumerate(pdf):
-            region = pdf_parser.chart_region_on_page(page)
-            if region is None:
-                continue
             page_number = page_index + 1
-            pixmap = page.get_pixmap(clip=region, matrix=pymupdf.Matrix(2, 2))
-            observations.append(
-                extract_chart(
-                    pixmap.tobytes("png"),
-                    vision_fn,
-                    source_element_id=f"page{page_number}.vision_crop",
-                    page_or_slide=page_number,
+            region = pdf_parser.chart_region_on_page(page)
+            if region is not None:
+                pixmap = page.get_pixmap(clip=region, matrix=pymupdf.Matrix(2, 2))
+                observations.append(
+                    extract_chart(
+                        pixmap.tobytes("png"),
+                        vision_fn,
+                        source_element_id=f"page{page_number}.vision_crop",
+                        page_or_slide=page_number,
+                    )
                 )
-            )
+                continue
+
+            # no vector-drawn chart detected -- if the page also has no text
+            # layer (a scanned page, e.g. the whole page is one raster
+            # image), there's no native content at all to fall back on, so
+            # route the rendered page itself, as an ambiguous raster table
+            # per Section 3's "rasterized tables" case (no way to tell chart
+            # from table from a bare image, so <tables_json> is the default,
+            # same choice already made for a PPTX picture shape)
+            if not page.get_text("text").strip() and page.get_images():
+                pixmap = page.get_pixmap(matrix=pymupdf.Matrix(2, 2))
+                observations.append(
+                    extract_table(
+                        pixmap.tobytes("png"),
+                        vision_fn,
+                        source_element_id=f"page{page_number}.vision_scan",
+                        page_or_slide=page_number,
+                    )
+                )
     return observations
 
 
