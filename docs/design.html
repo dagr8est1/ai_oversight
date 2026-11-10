@@ -123,6 +123,25 @@
   @media (max-width: 640px) { .two-col { grid-template-columns: 1fr; } }
 
   footer { margin-top: 3.5rem; padding-top: 1rem; border-top: 1px solid var(--border); color: var(--fg-muted); font-size: 0.8rem; }
+
+  @media print {
+    /* a sticky header can trigger a stray blank page in Chrome's print
+       pagination, and in-page jump links are useless on paper anyway */
+    header.top { display: none; }
+    @page { size: landscape; margin: 14mm; }
+    /* overflow-x:auto has no effect once there's no scrollbar to use --
+       on paper that just silently clips anything past the page edge, so
+       let wide tables shrink and wrap instead of scrolling */
+    .table-frame { overflow-x: visible; }
+    .table-frame table { min-width: 0; width: 100%; table-layout: fixed; font-size: 0.72rem; }
+    .table-frame td, .table-frame th { overflow-wrap: break-word; }
+    /* an SVG can never be split across pages -- it's placed whole on one
+       page or pushed entirely to the next, which otherwise leaves a
+       near-blank page behind it. Give the diagram its own, taller custom
+       page size instead of fighting the browser's default page height. */
+    @page diagram { size: 260mm 520mm; margin: 10mm; }
+    .diagram-frame { overflow-x: visible; page: diagram; break-before: page; break-after: page; }
+  }
 </style>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Literata:wght@500;600&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
 </head>
