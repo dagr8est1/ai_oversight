@@ -163,6 +163,15 @@ def _build_evidence(
     return evidence, False
 
 
+# A page with many candidate elements (e.g. 15 key_value pairs recovered
+# from a long vision table) asks the model to match all of them against
+# all 22 canonical fields in one generation -- found via a real run where
+# this many simultaneous matching decisions caused the model to miss some
+# otherwise-clear matches. Splitting one page into several smaller chunks
+# keeps each matching decision more tractable, at the cost of more calls.
+MAX_ELEMENTS_PER_CHUNK = 5
+
+
 def _chunk_by_page(doc: ParsedDocument) -> list[_Chunk]:
     by_page: dict[int, list[Element]] = defaultdict(list)
     for element in doc.elements:
@@ -171,10 +180,17 @@ def _chunk_by_page(doc: ParsedDocument) -> list[_Chunk]:
     chunks = []
     for page in sorted(by_page):
         kept = [el for el in by_page[page] if _element_text(el)]
-        element_texts = {el.element_id: _element_text(el) for el in kept}
-        element_types = {el.element_id: el.type for el in kept}
-        chunks.append(_Chunk(page_or_slide=page, element_texts=element_texts, element_types=element_types))
+        for group in _batched(kept, MAX_ELEMENTS_PER_CHUNK):
+            element_texts = {el.element_id: _element_text(el) for el in group}
+            element_types = {el.element_id: el.type for el in group}
+            chunks.append(
+                _Chunk(page_or_slide=page, element_texts=element_texts, element_types=element_types)
+            )
     return chunks
+
+
+def _batched(items: list[Element], size: int) -> list[list[Element]]:
+    return [items[i : i + size] for i in range(0, len(items), size)]
 
 
 # Prefixes a table-shaped element's text so the prompt's own instructions

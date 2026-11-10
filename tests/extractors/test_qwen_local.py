@@ -289,6 +289,39 @@ def test_a_value_cited_from_a_table_type_element_is_never_confidently_extracted(
     assert field.status == "needs_review"
 
 
+def test_a_page_with_many_candidates_is_split_into_smaller_chunks():
+    # found via a real end-to-end run: a page with ~15 recovered key_value
+    # candidates asked the model to match all of them against all 22
+    # canonical fields in a single generation, and it missed some
+    # otherwise-clear matches (e.g. "MODEL INVENTORY ID" never got mapped
+    # to submission_id at all). Splitting one page into several smaller
+    # chunks keeps each matching decision more tractable.
+    captured_prompts = []
+
+    def fake_generate(prompt: str) -> str:
+        captured_prompts.append(prompt)
+        return "{}"
+
+    elements = [
+        Element(
+            element_id=f"page1.kv{i}",
+            type="key_value",
+            page_or_slide=1,
+            method="m",
+            content={"label": f"LABEL {i}", "value": f"VALUE {i}"},
+        )
+        for i in range(12)
+    ]
+    doc = ParsedDocument(document_id="sha256:x", filename="x.pdf", format="pdf", elements=elements)
+
+    qwen_local.extract(doc, generate_fn=fake_generate)
+
+    assert len(captured_prompts) > 1
+    # each individual chunk's prompt has only a subset of the 12 labels,
+    # not every one of them crammed into a single call
+    assert not all(f"LABEL {i}" in captured_prompts[0] for i in range(12))
+
+
 def test_metrics_incidents_and_document_type_come_from_the_ir_not_the_model():
     def fake_generate(prompt: str) -> str:
         return "{}"
