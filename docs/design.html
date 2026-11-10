@@ -1,0 +1,515 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AI Oversight Pipeline</title>
+<style>
+  :root {
+    --bg: #faf8f4;
+    --surface: #ffffff;
+    --fg: #23201b;
+    --fg-muted: #6b6456;
+    --border: #e4ddcf;
+    --accent: #1f6f66;
+    --accent-soft: #e3efec;
+    --code-bg: #f1ede3;
+    --status-extracted: #2f7d4f;
+    --status-needs-review: #b6791a;
+    --status-ambiguous: #7a5fb0;
+    --status-conflicting: #b4432f;
+    --status-missing: #8a8373;
+    --font-display: "Literata", Georgia, serif;
+    --font-body: "IBM Plex Sans", -apple-system, sans-serif;
+    --font-mono: "IBM Plex Mono", ui-monospace, Menlo, monospace;
+    color-scheme: light;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #1b1915;
+      --surface: #242119;
+      --fg: #ece6d9;
+      --fg-muted: #ab9f8a;
+      --border: #3a3527;
+      --accent: #5bb3a3;
+      --accent-soft: #223029;
+      --code-bg: #171410;
+      --status-extracted: #5fbf87;
+      --status-needs-review: #e0a847;
+      --status-ambiguous: #ab8fe0;
+      --status-conflicting: #e2795f;
+      --status-missing: #9c9484;
+      color-scheme: dark;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #1b1915;
+    --surface: #242119;
+    --fg: #ece6d9;
+    --fg-muted: #ab9f8a;
+    --border: #3a3527;
+    --accent: #5bb3a3;
+    --accent-soft: #223029;
+    --code-bg: #171410;
+    --status-extracted: #5fbf87;
+    --status-needs-review: #e0a847;
+    --status-ambiguous: #ab8fe0;
+    --status-conflicting: #e2795f;
+    --status-missing: #9c9484;
+    color-scheme: dark;
+  }
+
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--fg); font-family: var(--font-body); line-height: 1.55; }
+  body { padding-left: max(16px, 0px); padding-right: max(16px, 0px); }
+
+  h1, h2, h3 { font-family: var(--font-display); font-weight: 600; text-wrap: balance; color: var(--fg); }
+  h1 { font-size: 2.1rem; margin: 0 0 0.3rem; }
+  h2 { font-size: 1.5rem; margin: 0 0 0.9rem; padding-top: 2px; }
+  h3 { font-size: 1.1rem; margin: 1.4rem 0 0.5rem; }
+  code, .mono { font-family: var(--font-mono); font-size: 0.86em; }
+  code { background: var(--code-bg); padding: 0.1em 0.4em; border-radius: 4px; }
+  p { margin: 0.6rem 0; color: var(--fg); max-width: 42em; }
+  a { color: var(--accent); }
+
+  .wrap { max-width: 880px; margin: 0 auto; padding-bottom: 4rem; }
+
+  header.top {
+    position: sticky; top: 0; z-index: 10;
+    background: var(--bg); border-bottom: 1px solid var(--border);
+    padding: 0.7rem 0;
+  }
+  nav.toc { display: flex; flex-wrap: wrap; gap: 0.3rem 1rem; font-size: 0.82rem; }
+  nav.toc a { color: var(--fg-muted); text-decoration: none; white-space: nowrap; }
+  nav.toc a:hover { color: var(--accent); }
+  .eyebrow { font-family: var(--font-mono); font-size: 0.72rem; letter-spacing: 0.08em; text-transform: uppercase; color: var(--accent); display: block; margin-bottom: 0.4rem; }
+
+  section { margin-top: 3rem; }
+  .lede { font-size: 1.05rem; color: var(--fg-muted); max-width: 46em; }
+
+  .card {
+    background: var(--surface); border: 1px solid var(--border); border-radius: 10px;
+    padding: 1.1rem 1.3rem; margin: 0.9rem 0;
+  }
+  .card h4 { margin: 0 0 0.3rem; font-family: var(--font-body); font-size: 0.95rem; font-weight: 600; }
+  .card .path { color: var(--fg-muted); font-size: 0.8rem; margin-bottom: 0.5rem; display: block; }
+
+  .pill {
+    display: inline-flex; align-items: center; gap: 0.35em;
+    font-family: var(--font-mono); font-size: 0.74rem; padding: 0.15em 0.6em;
+    border-radius: 999px; border: 1px solid var(--border); white-space: nowrap;
+  }
+  .pill::before { content: ""; width: 7px; height: 7px; border-radius: 50%; display: inline-block; }
+  .pill.extracted { color: var(--status-extracted); } .pill.extracted::before { background: var(--status-extracted); }
+  .pill.needs-review { color: var(--status-needs-review); } .pill.needs-review::before { background: var(--status-needs-review); }
+  .pill.ambiguous { color: var(--status-ambiguous); } .pill.ambiguous::before { background: var(--status-ambiguous); }
+  .pill.conflicting { color: var(--status-conflicting); } .pill.conflicting::before { background: var(--status-conflicting); }
+  .pill.missing { color: var(--status-missing); } .pill.missing::before { background: var(--status-missing); }
+
+  .diagram-frame { overflow-x: auto; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 1rem; margin: 1.2rem 0; }
+  .diagram-frame svg { display: block; margin: 0 auto; min-width: 640px; }
+
+  table { border-collapse: collapse; width: 100%; font-size: 0.86rem; }
+  .table-frame { overflow-x: auto; border: 1px solid var(--border); border-radius: 10px; margin: 0.9rem 0; min-width: 0; }
+  .table-frame table { min-width: 680px; }
+  th, td { text-align: left; padding: 0.5rem 0.7rem; border-bottom: 1px solid var(--border); vertical-align: top; }
+  th { font-family: var(--font-mono); font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.04em; color: var(--fg-muted); background: var(--accent-soft); }
+  tr:last-child td { border-bottom: none; }
+
+  .band-row td:first-child { font-family: var(--font-mono); font-weight: 600; }
+  .formula { background: var(--code-bg); border-radius: 8px; padding: 0.9rem 1.1rem; font-family: var(--font-mono); font-size: 0.82rem; white-space: pre-wrap; margin: 0.8rem 0; overflow-x: auto; }
+
+  .two-col { display: grid; grid-template-columns: repeat(2, 1fr); gap: 0.8rem; }
+  @media (max-width: 640px) { .two-col { grid-template-columns: 1fr; } }
+
+  footer { margin-top: 3.5rem; padding-top: 1rem; border-top: 1px solid var(--border); color: var(--fg-muted); font-size: 0.8rem; }
+</style>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Literata:wght@500;600&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+</head>
+<body>
+
+<header class="top">
+  <div class="wrap" style="padding-bottom:0">
+    <nav class="toc">
+      <a href="#overview">Overview</a>
+      <a href="#pipeline">Pipeline</a>
+      <a href="#stage1">1 · Structural parse</a>
+      <a href="#stage2">2 · Granite Vision</a>
+      <a href="#stage3">3 · Field mapping</a>
+      <a href="#confidence">Confidence</a>
+      <a href="#reference">Class reference</a>
+      <a href="#cli">CLI</a>
+    </nav>
+  </div>
+</header>
+
+<div class="wrap">
+
+<section id="overview" style="margin-top:2.2rem">
+  <span class="eyebrow">Design note</span>
+  <h1>AI Oversight: three-stage extraction pipeline</h1>
+  <p class="lede">
+    ai_oversight turns an AI-governance report (PDF or PPTX) into 22 canonical fields defined by PLAN.md —
+    submission ID, model owner, risk rating, and so on — each with a value, a citation back to the source
+    document, a status, and a confidence score. The pipeline runs in three stages, and the second and third
+    each only do real work when the cheaper stage before them couldn't finish the job.
+  </p>
+  <p class="lede">
+    The organizing rule throughout is <strong>never fabricate</strong>: a value is only ever reported as
+    confidently <code>extracted</code> when it can be traced to real text in the source document. Every other
+    outcome — <code>needs_review</code>, <code>ambiguous</code>, <code>conflicting</code>, <code>missing</code> —
+    exists so that uncertainty is visible to a human reviewer instead of silently guessed away.
+  </p>
+</section>
+
+<section id="pipeline">
+  <h2>The pipeline, end to end</h2>
+  <p>
+    Stage 1 is always cheap and deterministic. Stage 2 (Granite Vision) only runs on the specific
+    pages/slides Stage 1 flagged as ambiguous — a vector-drawn chart, a scanned page, or a picture shape —
+    never on content Stage 1 already parsed cleanly. Stage 3 maps whatever elements exist (native + vision-recovered)
+    onto the 22 canonical fields, using either a fast deterministic backend or a two-pass local LLM backend.
+  </p>
+
+  <div class="diagram-frame">
+    <svg viewBox="0 0 760 1540" width="760" height="1540" role="img" aria-label="Flowchart of the three-stage extraction pipeline">
+      <defs>
+        <marker id="arrow" markerWidth="9" markerHeight="9" refX="7" refY="4" orient="auto">
+          <path d="M0,0 L8,4 L0,8 Z" fill="var(--fg-muted)"></path>
+        </marker>
+      </defs>
+      <style>
+        .box { fill: var(--surface); stroke: var(--border); stroke-width: 1.3; rx: 10; }
+        .box.stage1 { stroke: var(--accent); }
+        .box.stage2 { stroke: var(--status-needs-review); stroke-dasharray: 5 3; }
+        .box.stage3 { stroke: var(--accent); }
+        .box.out { fill: var(--accent-soft); stroke: var(--accent); }
+        .diamond { fill: var(--surface); stroke: var(--status-needs-review); stroke-width: 1.3; }
+        .lbl { font-family: var(--font-body); font-size: 13px; fill: var(--fg); text-anchor: middle; }
+        .lbl.small { font-size: 11.5px; fill: var(--fg-muted); }
+        .lbl.mono { font-family: var(--font-mono); font-size: 11px; fill: var(--fg-muted); }
+        .edge { stroke: var(--fg-muted); stroke-width: 1.3; fill: none; marker-end: url(#arrow); }
+        .edge.dash { stroke-dasharray: 4 3; }
+        .tag { font-family: var(--font-mono); font-size: 10.5px; fill: var(--accent); text-anchor: middle; }
+      </style>
+
+      <!-- Start -->
+      <rect class="box" x="290" y="10" width="180" height="46" rx="10"></rect>
+      <text class="lbl" x="380" y="38">PDF or PPTX report</text>
+
+      <!-- Stage 1 -->
+      <line class="edge" x1="380" y1="56" x2="380" y2="88"></line>
+      <text class="tag" x="380" y="80">STAGE 1 · always runs</text>
+      <rect class="box stage1" x="230" y="96" width="300" height="60" rx="10"></rect>
+      <text class="lbl" x="380" y="120">Structural parse</text>
+      <text class="lbl mono" x="380" y="140">pdf_parser / pptx_parser</text>
+
+      <line class="edge" x1="380" y1="156" x2="380" y2="186"></line>
+      <rect class="box" x="250" y="186" width="260" height="46" rx="10"></rect>
+      <text class="lbl" x="380" y="214">IR: ParsedDocument (Elements)</text>
+
+      <!-- Decision -->
+      <line class="edge" x1="380" y1="232" x2="380" y2="264"></line>
+      <polygon class="diamond" points="380,264 500,330 380,396 260,330"></polygon>
+      <text class="lbl small" x="380" y="320">Any page/slide only a</text>
+      <text class="lbl small" x="380" y="336">chart image, scan, or picture?</text>
+
+      <!-- No branch -->
+      <line class="edge dash" x1="260" y1="330" x2="120" y2="330"></line>
+      <text class="lbl small" x="135" y="318">no</text>
+      <line class="edge dash" x1="120" y1="330" x2="120" y2="680"></line>
+
+      <!-- Yes branch: Stage 2 -->
+      <line class="edge" x1="500" y1="330" x2="620" y2="330"></line>
+      <text class="lbl small" x="580" y="318">yes</text>
+      <text class="tag" x="620" y="380">STAGE 2 · conditional</text>
+      <rect class="box stage2" x="500" y="388" width="240" height="72" rx="10"></rect>
+      <text class="lbl" x="620" y="410">Granite Vision 4.1 4B</text>
+      <text class="lbl mono" x="620" y="428">chart2csv (vector chart crop)</text>
+      <text class="lbl mono" x="620" y="444">tables_json (scan / picture)</text>
+
+      <line class="edge" x1="620" y1="460" x2="620" y2="500"></line>
+      <rect class="box" x="500" y="500" width="240" height="56" rx="10"></rect>
+      <text class="lbl small" x="620" y="522">Repair truncated JSON;</text>
+      <text class="lbl small" x="620" y="538">merge recovered rows into IR</text>
+
+      <line class="edge" x1="620" y1="556" x2="620" y2="660"></line>
+      <line class="edge" x1="620" y1="660" x2="380" y2="660"></line>
+      <line class="edge" x1="120" y1="680" x2="120" y2="660"></line>
+      <line class="edge" x1="120" y1="660" x2="380" y2="660"></line>
+
+      <!-- Stage 3 entry -->
+      <text class="tag" x="380" y="700">STAGE 3 · field mapping</text>
+      <rect class="box stage3" x="230" y="706" width="300" height="52" rx="10"></rect>
+      <text class="lbl" x="380" y="736">Choose backend: rules | qwen_local</text>
+
+      <line class="edge" x1="310" y1="758" x2="310" y2="796"></line>
+      <line class="edge" x1="450" y1="758" x2="450" y2="796"></line>
+
+      <!-- rules branch -->
+      <rect class="box" x="190" y="796" width="240" height="68" rx="10"></rect>
+      <text class="lbl" x="310" y="820">rules backend</text>
+      <text class="lbl mono" x="310" y="838">label / field_id match</text>
+      <text class="lbl small" x="310" y="854">no model — deterministic</text>
+
+      <!-- qwen branch -->
+      <rect class="box" x="340" y="796" width="330" height="46" rx="10"></rect>
+      <text class="lbl" x="505" y="824">qwen_local backend (two passes)</text>
+
+      <line class="edge" x1="505" y1="842" x2="505" y2="876"></line>
+      <rect class="box" x="360" y="876" width="290" height="80" rx="10"></rect>
+      <text class="lbl" x="505" y="898">Main pass</text>
+      <text class="lbl small" x="505" y="916">chunk ≤5 elements/page;</text>
+      <text class="lbl small" x="505" y="932">match all 22 fields at once</text>
+      <text class="lbl mono" x="505" y="948">_chunk_by_page / _build_prompt</text>
+
+      <line class="edge" x1="505" y1="956" x2="505" y2="990"></line>
+      <rect class="box" x="360" y="990" width="290" height="62" rx="10"></rect>
+      <text class="lbl small" x="505" y="1012">Merge: verify each citation</text>
+      <text class="lbl small" x="505" y="1028">against its source; resolve conflicts</text>
+      <text class="lbl mono" x="505" y="1044">_build_evidence / _resolve_field_candidates</text>
+
+      <line class="edge" x1="505" y1="1052" x2="505" y2="1082"></line>
+      <polygon class="diamond" points="505,1082 605,1124 505,1166 405,1124"></polygon>
+      <text class="lbl small" x="505" y="1118">Any field still</text>
+      <text class="lbl small" x="505" y="1134">"missing"?</text>
+
+      <line class="edge dash" x1="605" y1="1124" x2="700" y2="1124"></line>
+      <text class="lbl small" x="665" y="1112">yes</text>
+      <line class="edge dash" x1="700" y1="1124" x2="700" y2="1200"></line>
+      <rect class="box" x="560" y="1200" width="280" height="86" rx="10"></rect>
+      <text class="lbl" x="700" y="1222">Second pass</text>
+      <text class="lbl small" x="700" y="1240">per missing field × whole page;</text>
+      <text class="lbl small" x="700" y="1256">tentative table citations allowed</text>
+      <text class="lbl mono" x="700" y="1272">_second_pass_missing_fields</text>
+      <line class="edge dash" x1="700" y1="1286" x2="700" y2="1310"></line>
+      <line class="edge dash" x1="700" y1="1310" x2="505" y2="1310"></line>
+      <line class="edge dash" x1="505" y1="1310" x2="505" y2="1166"></line>
+      <text class="lbl small" x="590" y="1302">re-merge (same rules)</text>
+
+      <line class="edge" x1="405" y1="1124" x2="310" y2="1124"></line>
+      <text class="lbl small" x="350" y="1112">no</text>
+
+      <!-- merge to output -->
+      <line class="edge" x1="310" y1="864" x2="310" y2="1340"></line>
+      <line class="edge" x1="310" y1="1124" x2="310" y2="1340"></line>
+      <line class="edge" x1="310" y1="1340" x2="440" y2="1340"></line>
+
+      <rect class="box out" x="290" y="1366" width="300" height="70" rx="10"></rect>
+      <text class="lbl" x="440" y="1390">ExtractionResult</text>
+      <text class="lbl small" x="440" y="1408">22 FieldValues, each with a</text>
+      <text class="lbl small" x="440" y="1424">status + computed confidence</text>
+
+      <line class="edge" x1="440" y1="1436" x2="440" y2="1466"></line>
+      <rect class="box" x="300" y="1466" width="280" height="46" rx="10"></rect>
+      <text class="lbl mono" x="440" y="1494">&lt;out&gt;.json  +  &lt;out&gt;.review.md</text>
+    </svg>
+  </div>
+  <p class="lede" style="font-size:0.82rem">
+    Dashed outlines/edges mark the two conditional branches: Stage 2 only runs for flagged pages, and the
+    second qwen_local pass only runs for fields the main pass left <code>missing</code>.
+  </p>
+</section>
+
+<section id="stage1">
+  <h2>Stage 1 — Structural parse</h2>
+  <p>
+    <code>pdf_parser.parse()</code> (PyMuPDF) and <code>pptx_parser.parse()</code> (python-pptx) turn the raw
+    file into the shared intermediate representation: a flat list of <code>Element</code>s, each one
+    <code>text</code>, <code>key_value</code>, <code>table</code>, or <code>chart</code>. No model runs here —
+    everything is regex, geometry, and shape structure.
+  </p>
+  <div class="two-col">
+    <div class="card">
+      <h4>PDF specifics</h4>
+      <p style="margin:0">Column-aware text blocks (the source reports are two-column); label→value pairing
+      gated by on-page distance so a pairing is never guessed across unrelated text; a vector-drawn chart's
+      gridline cluster is detected and its bounding region computed for Stage 2 to crop later.</p>
+    </div>
+    <div class="card">
+      <h4>PPTX specifics</h4>
+      <p style="margin:0">Numbered-ID shape rows become <code>key_value</code> elements; non-ID multi-shape
+      rows become <code>table</code> elements (ambiguous, multi-cell); a picture shape is never silently
+      dropped — it's recorded as a warning that routes it to Stage 2.</p>
+    </div>
+  </div>
+  <p>This stage also decides, implicitly, whether Stage 2 has anything to do: a page that parsed cleanly
+  carries no warning and is never sent to the vision model.</p>
+</section>
+
+<section id="stage2">
+  <h2>Stage 2 — Granite Vision (conditional)</h2>
+  <p>
+    <code>granite_vision.run_vision_pass()</code> only fires for exactly three situations Stage 1 could flag but
+    not resolve on its own:
+  </p>
+  <div class="table-frame">
+    <table>
+      <thead><tr><th>Trigger</th><th>Task sent to Granite</th><th>Why</th></tr></thead>
+      <tbody>
+        <tr><td>A page has a vector-drawn chart (gridlines detected, not a native chart object)</td><td><code>chart2csv</code></td><td>PyMuPDF can see the strokes but not what they encode</td></tr>
+        <tr><td>A PDF page has no text layer and contains an image (fully scanned page)</td><td><code>tables_json</code></td><td>no native content exists to fall back on</td></tr>
+        <tr><td>A PPTX picture shape</td><td><code>tables_json</code></td><td>can't tell chart from table from a bare image, so the more general task is the default</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p>
+    Granite's raw response is repaired if the model's EOS token cut it off mid-table (<code>_repair_truncated_json</code>
+    recovers every complete row before the cutoff), then merged back into the IR as ordinary
+    <code>Element</code>s — a recovered chart becomes a <code>chart</code> element, a single clean instance row
+    becomes a <code>key_value</code>, and a genuinely multi-instance table stays a cautioned <code>table</code>
+    element. Whichever Stage 3 backend runs next never knows the difference between native and vision-recovered content.
+  </p>
+  <p>
+    Because this stage is slow (a real local vision model), its output can be cached once with the
+    <code>vision</code> CLI command and replayed via <code>extract --vision-cache</code> — Stage 3 can then be
+    iterated on repeatedly without re-running Granite.
+  </p>
+</section>
+
+<section id="stage3">
+  <h2>Stage 3 — Field mapping</h2>
+  <p>Two interchangeable backends consume the same IR and produce the same <code>ExtractionResult</code> shape.</p>
+
+  <h3>rules backend — deterministic</h3>
+  <p>
+    Matches each <code>key_value</code>/<code>table</code> element's own numbered <code>field_id</code> or label
+    text against the canonical 22, with a synonym table for common wording variants. No model, no network,
+    effectively instant — the right choice when the source document's own numbering is reliable.
+  </p>
+
+  <h3>qwen_local backend — two-pass local LLM</h3>
+  <p>Runs <strong>Qwen3-4B-Instruct-2507</strong> locally (greedy decoding — more on why below) in two passes:</p>
+
+  <div class="card">
+    <h4>① Main pass — chunked, multi-field</h4>
+    <span class="path">_chunk_by_page → _build_prompt → _extract_chunk → _build_evidence → _resolve_field_candidates</span>
+    <p style="margin:0">
+      Each page is split into groups of at most 5 elements (<code>MAX_ELEMENTS_PER_CHUNK</code>) — asking a 4B
+      model to match ~15 candidates against 22 fields in one call measurably hurt recall. Each chunk's prompt
+      lists every canonical field's own PLAN.md description (not just its name) and warns that a
+      <code>table</code>-type element describes one repeated instance, never the whole document. Every citation is
+      checked against its source element's actual text before counting as substantiated, and a citation from a
+      <code>table</code>-type element is <em>always</em> unsubstantiated — a structural rule, not a prompt request,
+      because the model can choose to ignore a prompt instruction but can't bypass a code-level check.
+    </p>
+  </div>
+
+  <div class="card">
+    <h4>② Second pass — per field, whole page</h4>
+    <span class="path">_second_pass_missing_fields → _build_single_field_prompt → _extract_single_field</span>
+    <p style="margin:0">
+      For whatever fields are still <code>missing</code> after the main pass, ask about exactly <em>one</em> field
+      at a time against the <em>entire</em> page's elements (no further sub-chunking — a single-field prompt has
+      no multi-field output budget to protect). This pass's prompt also <em>invites</em> a tentative citation from
+      a <code>table</code>-type element instead of forbidding it outright, since the structural check above already
+      guarantees it can never outrank a verified answer — it can only ever surface as <code>needs_review</code>.
+    </p>
+  </div>
+
+  <p>
+    Both passes resolve candidates through the same merge rule: candidates are only ever compared for conflict
+    <em>within</em> a confidence tier. A verified citation always wins over a disagreeing unverifiable one; a
+    low-confidence table guess can never drag a correctly-substantiated answer down to <code>conflicting</code>.
+  </p>
+</section>
+
+<section id="confidence">
+  <h2>Confidence score</h2>
+  <p>
+    Every field carries a <code>confidence</code> float — a triage signal for a reviewer, not a literal
+    probability. It's a Pydantic <code>computed_field</code> on <code>FieldValue</code>, derived purely from
+    <code>status</code> and <code>evidence</code>, so it can never drift out of sync with either one.
+  </p>
+
+  <div class="table-frame">
+    <table>
+      <thead><tr><th>Status</th><th>Band</th><th>Moves toward ceiling when…</th></tr></thead>
+      <tbody>
+        <tr class="band-row"><td><span class="pill conflicting">conflicting</span></td><td>0.15 – 0.29</td><td><em>fewer</em> disagreeing sources (more sources disagreeing is a worse sign)</td></tr>
+        <tr class="band-row"><td><span class="pill ambiguous">ambiguous</span></td><td>0.30 – 0.44</td><td>more independent evidence flagging the same field as present-but-unclear</td></tr>
+        <tr class="band-row"><td><span class="pill needs-review">needs_review</span></td><td>0.45 – 0.70</td><td>more independent citations agreeing on the same unverified value</td></tr>
+        <tr class="band-row"><td><span class="pill extracted">extracted</span></td><td>0.85 – 1.00</td><td>more independent, verified citations agreeing on the same value</td></tr>
+        <tr class="band-row"><td><span class="pill missing">missing</span></td><td>0.00</td><td>— no value, nothing to be confident about</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p>The bands never touch, so a <code>needs_review</code> field — no matter how much corroborating evidence it
+  has — can never out-rank even a weakly-supported <code>extracted</code> one.</p>
+
+  <div class="formula">floor, ceiling = band for this status
+
+if status == "conflicting":
+    # more disagreement = worse, so corroboration runs backward
+    corroboration = max(SATURATION_CONFUSED - evidence_count, 0) / (SATURATION_CONFUSED - 2)
+else:
+    corroboration = max(0, min(evidence_count - 1, SATURATION - 1) / (SATURATION - 1))
+
+confidence = floor + (ceiling - floor) * corroboration</div>
+
+  <p style="font-size:0.9rem">
+    Worked example: <code>human_oversight</code> extracted from <strong>3</strong> independently-agreeing,
+    verified citations lands at the top of the <code>extracted</code> band — <strong>1.00</strong>. The same
+    field with just one citation would sit at the band's floor, <strong>0.85</strong>.
+  </p>
+</section>
+
+<section id="reference">
+  <h2>Class &amp; module reference</h2>
+  <div class="table-frame">
+    <table>
+      <thead><tr><th>Module</th><th>Name</th><th>What it's for</th></tr></thead>
+      <tbody>
+        <tr><td class="mono">config</td><td class="mono">Settings</td><td>Model names, cache dir, vision on/off — read from <code>AI_OVERSIGHT_*</code> env vars via <code>Settings.from_env()</code>. Swapping models never touches code.</td></tr>
+        <tr><td class="mono">parsers.document_ir</td><td class="mono">Element</td><td>One parsed unit (text/key_value/table/chart) with its page, bbox, and content. The common currency every stage passes along.</td></tr>
+        <tr><td class="mono">parsers.document_ir</td><td class="mono">ParsedDocument</td><td>A document's full <code>Element</code> list plus parser warnings. Stage 1's output; Stage 2's input and output; Stage 3's input.</td></tr>
+        <tr><td class="mono">parsers.pdf_parser / pptx_parser</td><td class="mono">parse()</td><td>File → <code>ParsedDocument</code>. No model. Column-aware text, label/value pairing, chart-region and picture-shape detection.</td></tr>
+        <tr><td class="mono">extractors.granite_vision</td><td class="mono">VisionObservation</td><td>One Granite call's raw response, parsed result, and status (<code>ok</code> / <code>needs_review</code>).</td></tr>
+        <tr><td class="mono">extractors.granite_vision</td><td class="mono">run_vision_pass() / enrich_document()</td><td>Finds the ambiguous regions, calls Granite, repairs truncated JSON, merges recovered content back into the IR as ordinary elements.</td></tr>
+        <tr><td class="mono">extractors.granite_vision</td><td class="mono">save_observations() / load_observations()</td><td>The caching pair: run the slow vision model once, replay its saved output for as many Stage-3 iterations as needed.</td></tr>
+        <tr><td class="mono">extractors.rules</td><td class="mono">extract()</td><td>Deterministic Stage-3 backend: field_id/label matching against the canonical 22, with a synonym table.</td></tr>
+        <tr><td class="mono">extractors.qwen_local</td><td class="mono">extract()</td><td>LLM Stage-3 backend: runs the main chunked pass, then the per-field second pass, then merges both into the result.</td></tr>
+        <tr><td class="mono">processing.merge</td><td class="mono">collect_metrics() / detect_performance_conflicts()</td><td>Backend-agnostic: harvests numeric metrics from chart/table elements and cross-checks a narrative claim against a chart's own numbers.</td></tr>
+        <tr><td class="mono">processing.validate</td><td class="mono">validate_field_shape()</td><td>Downgrades a value to <code>needs_review</code> if its shape doesn't match the field's expectation (e.g. <code>risk_rating</code> needs <code>{inherent, residual}</code>).</td></tr>
+        <tr><td class="mono">schemas</td><td class="mono">FieldValue</td><td>One field's value, status, evidence list, and computed <code>confidence</code>.</td></tr>
+        <tr><td class="mono">schemas</td><td class="mono">Evidence</td><td>One citation: page/slide, element ID, quote, and the method that produced it.</td></tr>
+        <tr><td class="mono">schemas</td><td class="mono">ExtractionResult</td><td>The full output: 22 fields, metrics, incidents, review flags, warnings, and the raw vision observations.</td></tr>
+        <tr><td class="mono">schemas</td><td class="mono">ReviewFlag</td><td>A rule-generated suggestion for a human — explicitly never a compliance finding.</td></tr>
+        <tr><td class="mono">reporting.json_writer / markdown_writer</td><td class="mono">write()</td><td>Renders an <code>ExtractionResult</code> into the two sibling output files.</td></tr>
+        <tr><td class="mono">cli</td><td class="mono">parse / vision / extract</td><td>The three entry points: structural-only, vision-only (with caching), and the full pipeline.</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section id="cli">
+  <h2>CLI commands</h2>
+  <div class="two-col">
+    <div class="card">
+      <h4><code>ai_oversight parse &lt;file&gt; --out ir.json</code></h4>
+      <p style="margin:0">Stage 1 only. No model. Useful for inspecting what the structural parser alone found.</p>
+    </div>
+    <div class="card">
+      <h4><code>ai_oversight vision &lt;file&gt; --out cache.json</code></h4>
+      <p style="margin:0">Stage 2 only, saved to disk. Run once; reuse below as many times as needed.</p>
+    </div>
+  </div>
+  <div class="card" style="margin-top:0.8rem">
+    <h4><code>ai_oversight extract &lt;file&gt; --backend qwen_local --vision-cache cache.json --out result.json</code></h4>
+    <p style="margin:0">
+      The full pipeline, Stage 3 reading from a saved vision cache instead of re-running Granite. Writes
+      <code>result.json</code> and <code>result.review.md</code>. Drop <code>--vision-cache</code> and add
+      <code>--vision</code> to run Granite live instead; drop both to skip Stage 2 entirely.
+    </p>
+  </div>
+</section>
+
+<footer>
+  ai_oversight — local AI-governance-report extraction. Every <code>extracted</code> value traces to real
+  source text; everything else is marked for a human to look at.
+</footer>
+
+</div>
+</body>
+</html>
