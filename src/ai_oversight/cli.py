@@ -1,8 +1,16 @@
+from pathlib import Path
+
 import typer
 
 import ai_oversight
+from ai_oversight.parsers import pdf_parser, pptx_parser
 
 app = typer.Typer(help="Local AI-usage-report extraction CLI.")
+
+_PARSERS = {
+    ".pdf": pdf_parser.parse,
+    ".pptx": pptx_parser.parse,
+}
 
 
 def _print_version_and_exit(show_version: bool) -> None:
@@ -26,3 +34,20 @@ def main(
     ),
 ) -> None:
     pass
+
+
+@app.command()
+def parse(
+    document: Path = typer.Argument(..., exists=True, help="PDF or PPTX report to parse."),
+    out: Path = typer.Option(..., "--out", help="Where to write the parsed IR JSON."),
+) -> None:
+    """Parse a report into the intermediate representation (IR). No model is used."""
+    parser = _PARSERS.get(document.suffix.lower())
+    if parser is None:
+        supported = ", ".join(sorted(_PARSERS))
+        typer.echo(f"unsupported file type {document.suffix!r}; supported: {supported}")
+        raise typer.Exit(code=1)
+
+    parsed = parser(document)
+    out.write_text(parsed.model_dump_json(indent=2))
+    typer.echo(f"wrote {out} ({len(parsed.elements)} elements, {len(parsed.warnings)} warnings)")

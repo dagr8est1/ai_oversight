@@ -28,6 +28,9 @@ dev = [
 line-length = 100
 target-version = "py312"
 
+[tool.ruff.lint.flake8-bugbear]
+extend-immutable-calls = ["typer.Argument", "typer.Option"]
+
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
