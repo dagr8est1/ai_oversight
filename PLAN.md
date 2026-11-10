@@ -2,7 +2,7 @@
 
 **Project name:** `ai-oversight-extractor`  
 **Status:** Implementation plan / coding-agent handoff  
-**Scope:** Local, open-source prototype using fictional AI usage reports; **not** an official DTCC workflow or reporting standard.  
+**Scope:** Local, open-source prototype using fictional AI usage reports; **not** tied to any real organization's workflow or reporting standard.  
 **Primary goal:** Parse PDF and PowerPoint reports containing text, visually formatted tables, and charts; extract a standardized set of 22 AI-governance fields with traceable source evidence; identify missing information and inconsistencies.
 
 > **Instructions for Claude Code / Claude in VS Code:** Implement this project incrementally, starting with the deterministic MVP. Inspect the repository and sample files before changing anything. Prefer working code, small modules, tests, and a README over speculative infrastructure. Do not assume the user's Mac has a GPU or a particular memory size. All inference must be local by default, with no paid API or uploaded confidential data. Build an end-to-end CLI workflow first; add the optional visual model only after the baseline works. If a proposed library API has changed, consult its current official documentation and adapt. Do not manufacture extracted values or report an unsupported compliance conclusion. Report completed steps, test results, and remaining limitations at the end.
@@ -24,7 +24,7 @@
 
 ### Non-goals for Version 1
 
-- No DTCC integration, SEC or FINRA compliance certification, or actual external regulatory submissions.
+- No integration with any real organization's systems, SEC or FINRA compliance certification, or actual external regulatory submissions.
 - No enterprise authentication, cloud hosting, vector database, RAG search service, or complex dashboard.
 - No automatic regulatory decision-making or unreviewed risk approval.
 - No promise that plotted PDF lines can always be reconstructed numerically from pixels.

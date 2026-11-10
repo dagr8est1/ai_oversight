@@ -1,9 +1,9 @@
 # ai_oversight
 
 Local, open-source prototype for extracting a standardized set of fields from
-AI-governance reports (PDF/PPTX). Fictional sample data only; not an official
-DTCC workflow or reporting standard. See [PLAN.md](PLAN.md) for the full
-design and phased roadmap.
+AI-governance reports (PDF/PPTX). Fictional sample data only; not tied to any
+real organization's workflow or reporting standard. See [PLAN.md](PLAN.md) for
+the full design and phased roadmap.
 
 ## Setup
 
