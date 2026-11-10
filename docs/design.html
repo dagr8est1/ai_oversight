@@ -166,6 +166,14 @@
     run entirely on local hardware. There's no API call and no per-token cost to run <code>extract</code>,
     no matter how many times a document is processed or re-processed.
   </p>
+  <p class="lede">
+    Hugging Face hosts many alternative models that could fill either role — larger, more capable ones
+    included. Qwen3-4B-Instruct-2507 was chosen specifically for its small size: it keeps GPU and memory
+    requirements low enough to run comfortably on ordinary local hardware (this project targets a 16GB Mac),
+    rather than requiring a dedicated GPU server. Swapping in a different <code>AI_OVERSIGHT_TEXT_MODEL</code>
+    is a config change, not a code change (see <code>Settings</code> below) — but every larger model trades
+    away some of that low-resource portability.
+  </p>
 </section>
 
 <section id="pipeline">
