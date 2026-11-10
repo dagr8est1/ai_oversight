@@ -318,6 +318,14 @@
     <code>text</code>, <code>key_value</code>, <code>table</code>, or <code>chart</code>. No model runs here —
     everything is regex, geometry, and shape structure.
   </p>
+  <p>
+    Every stage exchanges data as Pydantic models — <code>Element</code>, <code>ParsedDocument</code>,
+    <code>VisionObservation</code>, <code>ExtractionResult</code> — each one round-trips losslessly through
+    <code>model_dump_json()</code> / <code>model_validate_json()</code>. That's deliberate: Stage 1's job is to
+    capture everything the source document states, not to decide yet what's relevant to which of the 22 fields
+    — that decision is Stage 3's alone. A saved <code>ParsedDocument</code> JSON carries the same information no
+    matter which backend or model eventually reads it.
+  </p>
   <div class="two-col">
     <div class="card">
       <h4>PDF specifics</h4>
@@ -363,6 +371,13 @@
     Because this stage is slow (a real local vision model, also free of any API or token cost to run), its output can be cached once with the
     <code>vision</code> CLI command and replayed via <code>extract --vision-cache</code> — Stage 3 can then be
     iterated on repeatedly without re-running Granite.
+  </p>
+  <p>
+    The same applies one level up: Stage 1's own output can be saved with <code>parse --out</code>, and that
+    JSON is exactly the input every Stage 3 backend consumes. A saved parse — with or without a saved vision
+    cache merged into it — can be re-matched by <code>rules</code>, by <code>qwen_local</code>, or by a future
+    LLM backend, swapping which model does the matching without ever re-parsing the document or re-running
+    Granite.
   </p>
 </section>
 
@@ -487,7 +502,7 @@ confidence = floor + (ceiling - floor) * corroboration</div>
   <div class="two-col">
     <div class="card">
       <h4><code>ai_oversight parse &lt;file&gt; --out ir.json</code></h4>
-      <p style="margin:0">Stage 1 only. No model. Useful for inspecting what the structural parser alone found.</p>
+      <p style="margin:0">Stage 1 only. No model. Its output JSON is reusable input to any Stage 3 backend later, via that backend's own loader.</p>
     </div>
     <div class="card">
       <h4><code>ai_oversight vision &lt;file&gt; --out cache.json</code></h4>
