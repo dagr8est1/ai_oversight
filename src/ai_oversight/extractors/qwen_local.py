@@ -166,6 +166,15 @@ def _chunk_by_page(doc: ParsedDocument) -> list[_Chunk]:
     return chunks
 
 
+# Prefixes a table-shaped element's text so the prompt's own instructions
+# (see _build_prompt) can warn against treating one row/cell of a repeated
+# record (an incident, a control, a risk) as if it were a single
+# document-level field value -- found via a real run where Qwen pulled four
+# different controls' mitigation text out of one table and confidently
+# assigned each to an unrelated canonical field.
+_TABLE_MARKER = "[TABLE of repeated records, not a single document-level fact] "
+
+
 def _element_text(element: Element) -> str:
     if element.raw_text:
         return element.raw_text
@@ -173,9 +182,10 @@ def _element_text(element: Element) -> str:
     if "label" in content and "value" in content:
         return f"{content['label']}: {content['value']}"
     if "cells" in content:
-        return " | ".join(str(c) for c in content["cells"])
+        return _TABLE_MARKER + " | ".join(str(c) for c in content["cells"])
     if "rows" in content:
-        return "\n".join(" | ".join(str(c) for c in row) for row in content["rows"])
+        rows_text = "\n".join(" | ".join(str(c) for c in row) for row in content["rows"])
+        return _TABLE_MARKER + rows_text
     if "categories" in content and "series" in content:
         series_text = "; ".join(f"{s['name']}={s['values']}" for s in content["series"])
         return f"chart categories={content['categories']} {series_text}"
@@ -191,7 +201,12 @@ def _build_prompt(chunk: _Chunk, previous_error: str | None = None, previous_res
         f"field_name must be one of: {field_list}. element_id must be one of the bracketed IDs "
         "below, the one that actually states the value. Only include a key if this excerpt "
         'states that field. If a field is mentioned but unclear, use {"value": null, '
-        '"element_id": "..."}. Never invent a value not stated in the excerpt.\n\n'
+        '"element_id": "..."}. Never invent a value not stated in the excerpt. '
+        "Content marked [TABLE of repeated records, not a single document-level fact] lists "
+        "multiple instances of the same kind of thing (e.g. several different controls, "
+        "incidents, or risks) -- one row or cell from it describes only that one instance, "
+        "never the whole document. Do not use a value from inside such a table for any field "
+        "unless the excerpt's own wording states it applies document-wide, not just to one row.\n\n"
         f"Excerpt (page/slide {chunk.page_or_slide}):\n{excerpt}\n"
     )
     if previous_error is not None:

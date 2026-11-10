@@ -168,6 +168,61 @@ def test_model_performance_value_is_normalized_and_shape_validated():
     assert field.status == "extracted"
 
 
+def test_prompt_warns_that_a_wide_table_is_a_record_list_not_a_field_value():
+    # found via a real end-to-end run: Qwen pulled individual MITIGATION
+    # cells out of a 5-row control-matrix table and confidently assigned
+    # each one to a different, unrelated canonical field (e.g. one
+    # control's mitigation text became "human_oversight"). The prompt must
+    # warn against treating any one row/cell of a multi-record table as a
+    # document-level fact.
+    captured_prompts = []
+
+    def fake_generate(prompt: str) -> str:
+        captured_prompts.append(prompt)
+        return "{}"
+
+    doc = ParsedDocument(
+        document_id="sha256:x",
+        filename="x.pdf",
+        format="pdf",
+        elements=[
+            Element(
+                element_id="page4.table0",
+                type="table",
+                page_or_slide=4,
+                method="granite_vision_tables_json",
+                content={
+                    "rows": [
+                        ["CONTROLID", "MITIGATION", "OWNER", "STATE"],
+                        ["C-01", "Human authorization", "Operations Lead", "ACTIVE"],
+                    ]
+                },
+            )
+        ],
+    )
+
+    qwen_local.extract(doc, generate_fn=fake_generate)
+
+    assert len(captured_prompts) == 1
+    prompt = captured_prompts[0]
+    assert "record" in prompt.lower()
+    assert "Human authorization" in prompt  # the content itself is still included
+
+
+def test_the_table_caution_instruction_does_not_break_plain_field_extraction():
+    # the instruction is a general, always-true rule (harmless on a chunk
+    # with no table), not conditional on one being present -- what matters
+    # is that normal single-fact extraction still works unaffected by it
+    def fake_generate(prompt: str) -> str:
+        return '{"submission_id": {"value": "AI-1", "element_id": "page1.text0"}}'
+
+    doc = _doc_with_one_page("01 / Submission ID\nAI-1")
+    result = qwen_local.extract(doc, generate_fn=fake_generate)
+
+    assert result.fields["submission_id"].value == "AI-1"
+    assert result.fields["submission_id"].status == "extracted"
+
+
 def test_metrics_incidents_and_document_type_come_from_the_ir_not_the_model():
     def fake_generate(prompt: str) -> str:
         return "{}"
