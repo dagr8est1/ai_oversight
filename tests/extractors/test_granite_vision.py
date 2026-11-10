@@ -184,6 +184,9 @@ def test_observations_to_elements_converts_a_wide_table_into_a_single_table_elem
                     {"row": 2, "col": 1, "type": "data", "content": "C-01"},
                     {"row": 2, "col": 2, "type": "data", "content": "Ops"},
                     {"row": 2, "col": 3, "type": "data", "content": "ACTIVE"},
+                    {"row": 3, "col": 1, "type": "data", "content": "C-02"},
+                    {"row": 3, "col": 2, "type": "data", "content": "InfoSec"},
+                    {"row": 3, "col": 3, "type": "data", "content": "ACTIVE"},
                 ]
             }
         ],
@@ -192,11 +195,15 @@ def test_observations_to_elements_converts_a_wide_table_into_a_single_table_elem
 
     elements = granite_vision.observations_to_elements([obs])
 
+    # multiple real instance rows -- still one generic, cautioned table
+    # element (see test_wide_table_with_exactly_one_data_row_* for the
+    # single-instance case, which this is deliberately not)
     assert len(elements) == 1
     assert elements[0].type == "table"
     assert elements[0].content["rows"] == [
         ["CONTROL ID", "OWNER", "STATE"],
         ["C-01", "Ops", "ACTIVE"],
+        ["C-02", "InfoSec", "ACTIVE"],
     ]
 
 
@@ -455,3 +462,119 @@ def test_enrich_document_from_observations_merges_elements_without_running_visio
     kv_elements = [el for el in enriched.elements if el.type == "key_value"]
     assert len(kv_elements) == 1
     assert kv_elements[0].content == {"label": "STATUS", "value": "PILOT"}
+
+
+def _cell(row, col, content, colspan=1):
+    return {"row": row, "col": col, "colspan": colspan, "content": content}
+
+
+def test_wide_table_with_exactly_one_data_row_becomes_key_value_elements_per_column():
+    from ai_oversight.schemas import VisionObservation
+
+    obs = VisionObservation(
+        task="tables_json",
+        source_element_id="page3.vision_scan",
+        page_or_slide=3,
+        raw_response="...",
+        parsed=[
+            {
+                "cells": [
+                    _cell(1, 1, "IMPACT AREA"),
+                    _cell(1, 2, "EXPOSURE"),
+                    _cell(1, 3, "RESIDUAL RISK"),
+                    _cell(2, 1, "Settlement timeliness"),
+                    _cell(2, 2, "HIGH"),
+                    _cell(2, 3, "MEDIUM"),
+                ]
+            }
+        ],
+        status="ok",
+    )
+
+    elements = granite_vision.observations_to_elements([obs])
+
+    assert all(el.type == "key_value" for el in elements)
+    contents = {el.content["label"]: el.content["value"] for el in elements}
+    assert contents == {
+        "IMPACT AREA": "Settlement timeliness",
+        "EXPOSURE": "HIGH",
+        "RESIDUAL RISK": "MEDIUM",
+    }
+
+
+def test_wide_table_extracts_a_narrower_summary_row_separately_from_repeated_rows():
+    from ai_oversight.schemas import VisionObservation
+
+    obs = VisionObservation(
+        task="tables_json",
+        source_element_id="page2.vision_scan",
+        page_or_slide=2,
+        raw_response="...",
+        parsed=[
+            {
+                "cells": [
+                    _cell(1, 1, "PREDICTED FAILURE"),
+                    _cell(1, 2, "Yes"),
+                    _cell(1, 3, "No"),
+                    _cell(2, 1, "Actual failure"),
+                    _cell(2, 2, "174"),
+                    _cell(2, 3, "26"),
+                    _cell(3, 1, "Actual success"),
+                    _cell(3, 2, "17"),
+                    _cell(3, 3, "783"),
+                    _cell(4, 1, "n=1,000 records | Precision 91.1% | Recall 87.0%", colspan=3),
+                ]
+            }
+        ],
+        status="ok",
+    )
+
+    elements = granite_vision.observations_to_elements([obs])
+
+    text_elements = [el for el in elements if el.type == "text"]
+    table_elements = [el for el in elements if el.type == "table"]
+    assert len(text_elements) == 1
+    assert "Precision 91.1%" in text_elements[0].raw_text
+    assert len(table_elements) == 1
+    assert table_elements[0].content["rows"] == [
+        ["PREDICTED FAILURE", "Yes", "No"],
+        ["Actual failure", "174", "26"],
+        ["Actual success", "17", "783"],
+    ]
+
+
+def test_wide_table_with_multiple_full_rows_and_no_summary_row_is_unchanged():
+    from ai_oversight.schemas import VisionObservation
+
+    obs = VisionObservation(
+        task="tables_json",
+        source_element_id="page4.vision_scan",
+        page_or_slide=4,
+        raw_response="...",
+        parsed=[
+            {
+                "cells": [
+                    _cell(1, 1, "CONTROLID"),
+                    _cell(1, 2, "MITIGATION"),
+                    _cell(1, 3, "OWNER"),
+                    _cell(2, 1, "C-01"),
+                    _cell(2, 2, "Human authorization"),
+                    _cell(2, 3, "Operations Lead"),
+                    _cell(3, 1, "C-02"),
+                    _cell(3, 2, "Input data validation"),
+                    _cell(3, 3, "Data Engineering"),
+                ]
+            }
+        ],
+        status="ok",
+    )
+
+    elements = granite_vision.observations_to_elements([obs])
+
+    assert len(elements) == 1
+    assert elements[0].type == "table"
+    assert elements[0].content["rows"] == [
+        ["CONTROLID", "MITIGATION", "OWNER"],
+        ["C-01", "Human authorization", "Operations Lead"],
+        ["C-02", "Input data validation", "Data Engineering"],
+    ]

@@ -284,9 +284,7 @@ def _table_elements(observation: VisionObservation) -> list[Element]:
         if max_col <= 2:
             elements.extend(_key_value_elements(observation, by_row, table_index))
         else:
-            element = _table_element(observation, by_row, table_index)
-            if element is not None:
-                elements.append(element)
+            elements.extend(_wide_table_elements(observation, by_row, table_index))
     return elements
 
 
@@ -321,23 +319,82 @@ def _key_value_elements(
     return elements
 
 
-def _table_element(
+def _wide_table_elements(
     observation: VisionObservation, by_row: dict[int, dict[int, str]], table_index: int
-) -> Element | None:
-    rows = []
-    for row_index in sorted(by_row):
-        row_cols = by_row[row_index]
-        max_col = max(row_cols)
-        rows.append([str(row_cols.get(col) or "") for col in range(1, max_col + 1)])
-    if not rows:
-        return None
-    return Element(
-        element_id=f"{observation.source_element_id}.table{table_index}",
-        type="table",
-        page_or_slide=observation.page_or_slide,
-        method=f"granite_vision_{observation.task}",
-        content={"rows": rows},
-    )
+) -> list[Element]:
+    """A wide (>2-column) table's rows aren't automatically a 'repeated
+    records' list -- two structural signals, both read off Granite's own
+    cell data (not guessed), say otherwise:
+
+    - A row with fewer cells than the table's full width is a merged/
+      colspan cell -- a summary or footer fact (e.g. "n=1,000 records |
+      Precision 91.1% | Recall 87.0%"), not one more instance. It's
+      extracted as its own plain-text fact, safe regardless of how many
+      real instance rows the table has.
+    - If, after removing such summary rows, there's exactly one real body
+      row left, there's no "which instance" ambiguity at all -- each
+      header/value column pair is as safe as a 2-column table's row.
+
+    Only when more than one full-width body row remains does the content
+    stay a generic `table` element, cautioned in qwen_local's prompt as a
+    list of repeated records.
+    """
+    sorted_rows = sorted(by_row)
+    if len(sorted_rows) < 2:
+        return []
+
+    full_width = max(len(cols) for cols in by_row.values())
+    header_row_index = sorted_rows[0]
+    body_row_indices = sorted_rows[1:]
+    full_body_rows = [i for i in body_row_indices if len(by_row[i]) == full_width]
+    summary_row_indices = [i for i in body_row_indices if len(by_row[i]) < full_width]
+
+    elements: list[Element] = []
+    for row_index in summary_row_indices:
+        text = " | ".join(str(value) for value in by_row[row_index].values() if value)
+        if text:
+            elements.append(
+                Element(
+                    element_id=f"{observation.source_element_id}.table{table_index}.summary{row_index}",
+                    type="text",
+                    page_or_slide=observation.page_or_slide,
+                    method=f"granite_vision_{observation.task}",
+                    raw_text=text,
+                )
+            )
+
+    if len(full_body_rows) == 1:
+        header_cells = by_row[header_row_index]
+        value_cells = by_row[full_body_rows[0]]
+        for col in sorted(header_cells):
+            label, value = header_cells.get(col), value_cells.get(col)
+            if label and value:
+                elements.append(
+                    Element(
+                        element_id=f"{observation.source_element_id}.table{table_index}.col{col}",
+                        type="key_value",
+                        page_or_slide=observation.page_or_slide,
+                        method=f"granite_vision_{observation.task}",
+                        content={"label": str(label), "value": str(value)},
+                        raw_text=f"{label}: {value}",
+                    )
+                )
+    elif full_body_rows:
+        rows = [
+            [str(by_row[i].get(col) or "") for col in range(1, full_width + 1)]
+            for i in [header_row_index, *full_body_rows]
+        ]
+        elements.append(
+            Element(
+                element_id=f"{observation.source_element_id}.table{table_index}",
+                type="table",
+                page_or_slide=observation.page_or_slide,
+                method=f"granite_vision_{observation.task}",
+                content={"rows": rows},
+            )
+        )
+
+    return elements
 
 
 def build_default_vision_fn(settings: Settings | None) -> VisionFn:
