@@ -41,6 +41,7 @@ class ModelNotAvailableError(RuntimeError):
 class _Chunk:
     page_or_slide: int
     element_texts: dict[str, str]  # element_id -> its own source text
+    element_types: dict[str, str]  # element_id -> IR type (text/key_value/table/chart)
 
 
 @dataclass
@@ -124,10 +125,15 @@ def _build_evidence(
     chunk: _Chunk, cited_element_id: str | None, raw_response: str, value: Any
 ) -> tuple[Evidence, bool]:
     """Returns (evidence, substantiated). `substantiated` is True only when
-    the model cited a real element in this chunk AND (for a string value)
-    that value actually appears in that element's own text -- PLAN.md
-    Section 9 requires every extracted field to point to a specific source
-    element, so neither a made-up citation nor a citation whose value isn't
+    the model cited a real element in this chunk, that element isn't a
+    `table`-type (a repeated-record list, by construction -- see
+    granite_vision.observations_to_elements -- never a single unambiguous
+    fact, so citing one is never trustworthy regardless of what the prompt
+    says; the model can choose to ignore a prompt instruction, not a
+    structural check), AND (for a string value) that value actually appears
+    in the cited element's own text -- PLAN.md Section 9 requires every
+    extracted field to point to a specific source element, so neither a
+    made-up citation, a table-sourced one, nor one whose value isn't
     actually there can count as a confident `extracted`.
     """
     if cited_element_id and cited_element_id in chunk.element_texts:
@@ -138,6 +144,8 @@ def _build_evidence(
             quote=source_text,
             method="qwen_local",
         )
+        if chunk.element_types.get(cited_element_id) == "table":
+            return evidence, False
         substantiated = (
             not isinstance(value, str) or _normalize_for_match(value) in _normalize_for_match(source_text)
         )
@@ -162,8 +170,10 @@ def _chunk_by_page(doc: ParsedDocument) -> list[_Chunk]:
 
     chunks = []
     for page in sorted(by_page):
-        element_texts = {el.element_id: text for el in by_page[page] if (text := _element_text(el))}
-        chunks.append(_Chunk(page_or_slide=page, element_texts=element_texts))
+        kept = [el for el in by_page[page] if _element_text(el)]
+        element_texts = {el.element_id: _element_text(el) for el in kept}
+        element_types = {el.element_id: el.type for el in kept}
+        chunks.append(_Chunk(page_or_slide=page, element_texts=element_texts, element_types=element_types))
     return chunks
 
 

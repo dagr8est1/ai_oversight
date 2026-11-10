@@ -244,6 +244,51 @@ def test_the_table_caution_instruction_does_not_break_plain_field_extraction():
     assert result.fields["submission_id"].status == "extracted"
 
 
+def test_a_value_cited_from_a_table_type_element_is_never_confidently_extracted():
+    # found via a real end-to-end run: despite the prompt's caution
+    # instruction, the model still cited a `table`-type element (a
+    # 5-row control matrix) for "fallback_process", picking out one
+    # control's mitigation text ("Manual fallback drill") because the
+    # field's own description shares words with it. A `table`-type
+    # element is, by construction, only ever created when there's more
+    # than one real repeated-instance row -- there's no legitimate case
+    # where citing one is a confident, unambiguous document-level fact.
+    # This must be enforced structurally, not left to the model actually
+    # following an instruction it can choose to ignore.
+    def fake_generate(prompt: str) -> str:
+        return (
+            '{"fallback_process": {"value": "Manual fallback drill", '
+            '"element_id": "page4.table0"}}'
+        )
+
+    doc = ParsedDocument(
+        document_id="sha256:x",
+        filename="x.pdf",
+        format="pdf",
+        elements=[
+            Element(
+                element_id="page4.table0",
+                type="table",
+                page_or_slide=4,
+                method="granite_vision_tables_json",
+                content={
+                    "rows": [
+                        ["CONTROLID", "MITIGATION"],
+                        ["C-01", "Human authorization"],
+                        ["C-02", "Manual fallback drill"],
+                    ]
+                },
+            )
+        ],
+    )
+
+    result = qwen_local.extract(doc, generate_fn=fake_generate)
+
+    field = result.fields["fallback_process"]
+    assert field.value == "Manual fallback drill"
+    assert field.status == "needs_review"
+
+
 def test_metrics_incidents_and_document_type_come_from_the_ir_not_the_model():
     def fake_generate(prompt: str) -> str:
         return "{}"
