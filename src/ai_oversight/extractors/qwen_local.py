@@ -49,6 +49,7 @@ class _Candidate:
     value: Any
     evidence: Evidence
     substantiated: bool
+    source_type: str | None  # the cited element's IR type (text/key_value/table/chart), None if uncited
 
 
 def extract(
@@ -85,9 +86,9 @@ def extract(
                 # for this chunk, rather than not mentioning it at all
                 ambiguous_signaled.add(field_name)
                 continue
-            evidence, substantiated = _build_evidence(chunk, element_id, raw_response, value)
+            evidence, substantiated, source_type = _build_evidence(chunk, element_id, raw_response, value)
             candidates[field_name].append(
-                _Candidate(value=value, evidence=evidence, substantiated=substantiated)
+                _Candidate(value=value, evidence=evidence, substantiated=substantiated, source_type=source_type)
             )
 
     fields, review_flags = _merge_candidates(candidates, ambiguous_signaled, failed_chunks)
@@ -124,33 +125,36 @@ def _normalize_for_match(text: str) -> str:
 
 def _build_evidence(
     chunk: _Chunk, cited_element_id: str | None, raw_response: str, value: Any
-) -> tuple[Evidence, bool]:
-    """Returns (evidence, substantiated). `substantiated` is True only when
-    the model cited a real element in this chunk, that element isn't a
-    `table`-type (a repeated-record list, by construction -- see
-    granite_vision.observations_to_elements -- never a single unambiguous
-    fact, so citing one is never trustworthy regardless of what the prompt
-    says; the model can choose to ignore a prompt instruction, not a
-    structural check), AND (for a string value) that value actually appears
-    in the cited element's own text -- PLAN.md Section 9 requires every
-    extracted field to point to a specific source element, so neither a
-    made-up citation, a table-sourced one, nor one whose value isn't
-    actually there can count as a confident `extracted`.
+) -> tuple[Evidence, bool, str | None]:
+    """Returns (evidence, substantiated, source_type). `substantiated` is
+    True only when the model cited a real element in this chunk, that
+    element isn't a `table`-type (a repeated-record list, by construction --
+    see granite_vision.observations_to_elements -- never a single
+    unambiguous fact, so citing one is never trustworthy regardless of what
+    the prompt says; the model can choose to ignore a prompt instruction,
+    not a structural check), AND (for a string value) that value actually
+    appears in the cited element's own text -- PLAN.md Section 9 requires
+    every extracted field to point to a specific source element, so neither
+    a made-up citation, a table-sourced one, nor one whose value isn't
+    actually there can count as a confident `extracted`. `source_type` is
+    the cited element's own IR type, used by `_resolve_field_candidates` to
+    prefer an explicit key_value citation over a disagreeing text one.
     """
     if cited_element_id and cited_element_id in chunk.element_texts:
         source_text = chunk.element_texts[cited_element_id]
+        source_type = chunk.element_types.get(cited_element_id)
         evidence = Evidence(
             page_or_slide=chunk.page_or_slide,
             element_id=cited_element_id,
             quote=source_text,
             method="qwen_local",
         )
-        if chunk.element_types.get(cited_element_id) == "table":
-            return evidence, False
+        if source_type == "table":
+            return evidence, False, source_type
         substantiated = (
             not isinstance(value, str) or _normalize_for_match(value) in _normalize_for_match(source_text)
         )
-        return evidence, substantiated
+        return evidence, substantiated, source_type
 
     # the model didn't cite a real element in this chunk -- degrade to a
     # chunk-level citation rather than rejecting an otherwise-usable value,
@@ -161,7 +165,7 @@ def _build_evidence(
         quote=raw_response,
         method="qwen_local",
     )
-    return evidence, False
+    return evidence, False, None
 
 
 # A page with many candidate elements (e.g. 15 key_value pairs recovered
@@ -379,6 +383,16 @@ def _resolve_field_candidates(name: str, entries: list[_Candidate]) -> tuple[Fie
     key_value citation on another, and the old all-candidates-together
     comparison downgraded the verified answer to `conflicting` and even
     displayed the lower-confidence guess as the field's value.
+
+    Within that tier, a disagreement is resolved one tiebreak further
+    before being accepted as a genuine conflict: an explicit key_value
+    citation (a labeled field:value pair) wins over a disagreeing text
+    citation (unstructured prose) -- found via a real run where a clean,
+    labeled "Model type: Retrieval-augmented LLM + classifier" row
+    disagreed with an unrelated narrative sentence elsewhere in the same
+    deck that merely happened to describe similar-sounding content. Both
+    were genuinely substantiated, so only the citation's own structure --
+    not its text-match correctness -- can tell them apart.
     """
     substantiated = [c for c in entries if c.substantiated]
     tier = substantiated or entries
@@ -386,7 +400,12 @@ def _resolve_field_candidates(name: str, entries: list[_Candidate]) -> tuple[Fie
 
     distinct_values = {_stable_key(c.value) for c in tier}
     if len(distinct_values) > 1:
-        return FieldValue(value=tier[0].value, status="conflicting", evidence=evidence), len(distinct_values)
+        key_value_tier = [c for c in tier if c.source_type == "key_value"]
+        key_value_distinct = {_stable_key(c.value) for c in key_value_tier}
+        if key_value_tier and len(key_value_distinct) == 1:
+            tier = key_value_tier
+        else:
+            return FieldValue(value=tier[0].value, status="conflicting", evidence=evidence), len(distinct_values)
 
     if not substantiated:
         return (
@@ -430,8 +449,10 @@ def _second_pass_missing_fields(
             value, element_id = _unpack_field_entry(parsed)
             if value is None:
                 continue
-            evidence, substantiated = _build_evidence(chunk, element_id, raw_response, value)
-            candidates.append(_Candidate(value=value, evidence=evidence, substantiated=substantiated))
+            evidence, substantiated, source_type = _build_evidence(chunk, element_id, raw_response, value)
+            candidates.append(
+                _Candidate(value=value, evidence=evidence, substantiated=substantiated, source_type=source_type)
+            )
 
         if candidates:
             fields[field_name], _ = _resolve_field_candidates(field_name, candidates)

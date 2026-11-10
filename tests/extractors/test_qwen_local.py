@@ -197,6 +197,57 @@ def test_extract_flags_conflicting_values_across_chunks():
     assert any(flag.field == "model_type" for flag in result.review_flags)
 
 
+def test_a_key_value_citation_wins_over_a_disagreeing_text_citation():
+    # found via a real end-to-end run: a clean, explicitly-labeled
+    # key_value row ("Model type: Retrieval-augmented LLM + classifier")
+    # disagreed with an unrelated narrative sentence elsewhere in the deck
+    # that happened to describe similar-sounding content ("Retrieval + LLM
+    # summarization + classification..."). Both were genuinely substantiated
+    # (each matched its own cited text), so the old tiered conflict logic
+    # had no way to prefer one -- an explicit label:value pair is a much
+    # stronger signal than unstructured prose that merely overlaps lexically.
+    responses = iter(
+        [
+            '{"model_type": {"value": "Retrieval-augmented LLM + classifier", "element_id": "slide1.kv0"}}',
+            '{"model_type": {"value": "Retrieval + LLM summarization", "element_id": "slide2.text0"}}',
+        ]
+    )
+
+    def fake_generate(prompt: str) -> str:
+        if "ONE specific structured field" in prompt:
+            return '{"value": null}'  # second-pass call for some other missing field
+        return next(responses)
+
+    doc = ParsedDocument(
+        document_id="sha256:x",
+        filename="x.pptx",
+        format="pptx",
+        elements=[
+            Element(
+                element_id="slide1.kv0",
+                type="key_value",
+                page_or_slide=1,
+                method="m",
+                content={"label": "Model type", "value": "Retrieval-augmented LLM + classifier"},
+            ),
+            Element(
+                element_id="slide2.text0",
+                type="text",
+                page_or_slide=2,
+                method="m",
+                raw_text="Retrieval + LLM summarization and classification; input prompts logged",
+            ),
+        ],
+    )
+
+    result = qwen_local.extract(doc, generate_fn=fake_generate)
+
+    field = result.fields["model_type"]
+    assert field.value == "Retrieval-augmented LLM + classifier"
+    assert field.status == "extracted"
+    assert not any(f.field == "model_type" for f in result.review_flags)
+
+
 def test_a_substantiated_candidate_wins_over_a_disagreeing_unsubstantiated_one():
     # found via a real end-to-end run on the external pptx fixture: a
     # tentative table-sourced guess on one slide disagreed with an
