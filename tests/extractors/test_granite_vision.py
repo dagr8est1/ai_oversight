@@ -116,102 +116,222 @@ def test_run_vision_pass_targets_only_the_pdf_chart_page():
     assert calls == ["<chart2csv>"]
 
 
-def test_apply_to_result_adds_vision_metrics_and_flags_a_conflict(tmp_path):
-    from ai_oversight.schemas import ExtractionResult, FieldValue
+def test_observations_to_elements_converts_chart2csv_into_a_chart_element():
+    from ai_oversight.schemas import VisionObservation
 
-    def fake_vision(image_bytes: bytes, task: str) -> str:
-        return "Month,Precision\nJul,0.89\nAug,0.90\nSep,0.92\nOct,0.80\n"
-
-    doc = ParsedDocument(document_id="sha256:x", filename=SAMPLE_PDF.name, format="pdf", elements=[])
-    result = ExtractionResult(
-        document_id="sha256:x",
-        source_file=SAMPLE_PDF.name,
-        extracted_at="2026-01-01T00:00:00Z",
-        fields={"model_performance": FieldValue(value={"precision": 0.91}, status="extracted", evidence=[])},
+    obs = VisionObservation(
+        task="chart2csv",
+        source_element_id="page3.vision_crop",
+        page_or_slide=3,
+        raw_response="Month,Precision\nJul,0.89\nAug,0.90\n",
+        parsed=[{"Month": "Jul", "Precision": "0.89"}, {"Month": "Aug", "Precision": "0.90"}],
+        status="ok",
     )
 
-    updated = granite_vision.apply_to_result(SAMPLE_PDF, doc, result, vision_fn=fake_vision)
+    elements = granite_vision.observations_to_elements([obs])
 
-    assert len(updated.metrics) == 4
-    assert updated.fields["model_performance"].status == "conflicting"
-    assert any(flag.field == "model_performance" for flag in updated.review_flags)
-    # the raw observation itself is retained too, not just the derived metrics
-    assert len(updated.vision_observations) == 1
-    assert updated.vision_observations[0].task == "chart2csv"
-    assert updated.vision_observations[0].status == "ok"
+    assert len(elements) == 1
+    assert elements[0].type == "chart"
+    assert elements[0].page_or_slide == 3
+    assert elements[0].content["categories"] == ["Jul", "Aug"]
+    assert elements[0].content["series"] == [{"name": "Precision", "values": [0.89, 0.90]}]
 
 
-def test_apply_to_result_retains_a_successful_tables_json_observation(tmp_path):
-    # a tables_json result (e.g. from a fully-scanned page) has no
-    # chart-specific merge path into metrics/fields -- it must still be
-    # retained on the result, not silently discarded just because nothing
-    # downstream consumes it yet
-    from ai_oversight.schemas import ExtractionResult
+def test_observations_to_elements_converts_a_two_column_table_into_key_value_elements():
+    from ai_oversight.schemas import VisionObservation
 
-    def fake_vision(image_bytes: bytes, task: str) -> str:
-        return '[{"Field": "Submission ID", "Value": "AI-1"}]'
+    obs = VisionObservation(
+        task="tables_json",
+        source_element_id="slide2.3",
+        page_or_slide=2,
+        raw_response="...",
+        parsed=[
+            {
+                "cells": [
+                    {"row": 1, "col": 1, "type": "header", "content": "APPLICATION ID"},
+                    {"row": 1, "col": 2, "type": "data", "content": "EXT-MRG-2026-031"},
+                    {"row": 2, "col": 1, "type": "header", "content": "BUSINESS OWNER"},
+                    {"row": 2, "col": 2, "type": "data", "content": "Elena Ortiz"},
+                ]
+            }
+        ],
+        status="ok",
+    )
 
+    elements = granite_vision.observations_to_elements([obs])
+
+    assert len(elements) == 2
+    assert all(el.type == "key_value" for el in elements)
+    assert all(el.page_or_slide == 2 for el in elements)
+    contents = {el.content["label"]: el.content["value"] for el in elements}
+    assert contents == {"APPLICATION ID": "EXT-MRG-2026-031", "BUSINESS OWNER": "Elena Ortiz"}
+
+
+def test_observations_to_elements_converts_a_wide_table_into_a_single_table_element():
+    from ai_oversight.schemas import VisionObservation
+
+    obs = VisionObservation(
+        task="tables_json",
+        source_element_id="page4.vision_scan",
+        page_or_slide=4,
+        raw_response="...",
+        parsed=[
+            {
+                "cells": [
+                    {"row": 1, "col": 1, "type": "header", "content": "CONTROL ID"},
+                    {"row": 1, "col": 2, "type": "header", "content": "OWNER"},
+                    {"row": 1, "col": 3, "type": "header", "content": "STATE"},
+                    {"row": 2, "col": 1, "type": "data", "content": "C-01"},
+                    {"row": 2, "col": 2, "type": "data", "content": "Ops"},
+                    {"row": 2, "col": 3, "type": "data", "content": "ACTIVE"},
+                ]
+            }
+        ],
+        status="ok",
+    )
+
+    elements = granite_vision.observations_to_elements([obs])
+
+    assert len(elements) == 1
+    assert elements[0].type == "table"
+    assert elements[0].content["rows"] == [
+        ["CONTROL ID", "OWNER", "STATE"],
+        ["C-01", "Ops", "ACTIVE"],
+    ]
+
+
+def test_observations_to_elements_handles_a_bare_dict_not_wrapped_in_a_list():
+    from ai_oversight.schemas import VisionObservation
+
+    obs = VisionObservation(
+        task="tables_json",
+        source_element_id="slide1.3",
+        page_or_slide=1,
+        raw_response="...",
+        parsed={
+            "cells": [
+                {"row": 1, "col": 1, "type": "header", "content": "STATUS"},
+                {"row": 1, "col": 2, "type": "data", "content": "PILOT"},
+            ]
+        },
+        status="ok",
+    )
+
+    elements = granite_vision.observations_to_elements([obs])
+
+    assert len(elements) == 1
+    assert elements[0].content == {"label": "STATUS", "value": "PILOT"}
+
+
+def test_observations_to_elements_skips_needs_review_observations():
+    from ai_oversight.schemas import VisionObservation
+
+    obs = VisionObservation(
+        task="tables_json",
+        source_element_id="page1.vision_scan",
+        page_or_slide=1,
+        raw_response="garbage",
+        parsed=None,
+        status="needs_review",
+        note="JSON parse error",
+    )
+
+    assert granite_vision.observations_to_elements([obs]) == []
+
+
+def test_enrich_document_merges_vision_elements_and_retains_observations(tmp_path):
     pdf_path = _make_scanned_pdf(tmp_path)
+
+    def fake_vision(image_bytes: bytes, task: str) -> str:
+        return '[{"cells": [{"row": 1, "col": 1, "type": "header", "content": "STATUS"}, {"row": 1, "col": 2, "type": "data", "content": "PILOT"}]}]'
+
     doc = ParsedDocument(document_id="sha256:x", filename=pdf_path.name, format="pdf", elements=[])
-    result = ExtractionResult(
-        document_id="sha256:x", source_file=pdf_path.name, extracted_at="2026-01-01T00:00:00Z", fields={}
-    )
 
-    updated = granite_vision.apply_to_result(pdf_path, doc, result, vision_fn=fake_vision)
+    enriched, observations, warning = granite_vision.enrich_document(pdf_path, doc, vision_fn=fake_vision)
 
-    assert len(updated.vision_observations) == 1
-    obs = updated.vision_observations[0]
-    assert obs.task == "tables_json"
-    assert obs.status == "ok"
-    assert obs.parsed == [{"Field": "Submission ID", "Value": "AI-1"}]
+    assert warning is None
+    assert len(observations) == 1
+    assert observations[0].status == "ok"
+    kv_elements = [el for el in enriched.elements if el.type == "key_value"]
+    assert len(kv_elements) == 1
+    assert kv_elements[0].content == {"label": "STATUS", "value": "PILOT"}
+    # the original document's own elements are preserved, not replaced
+    assert enriched.document_id == doc.document_id
 
 
-def test_apply_to_result_degrades_to_a_warning_on_any_model_failure_not_just_missing_extra():
-    # once the extra IS installed, loading or running the real model can
-    # still fail for other reasons (offline, missing weights, OOM) --
-    # apply_to_result must never let that escape as a crash either
-    from ai_oversight.schemas import ExtractionResult
-
+def test_enrich_document_degrades_to_a_warning_on_any_model_failure_not_just_missing_extra():
     def broken_vision_fn(image_bytes: bytes, task: str) -> str:
         raise RuntimeError("out of memory")
 
     doc = ParsedDocument(document_id="sha256:x", filename=SAMPLE_PDF.name, format="pdf", elements=[])
-    result = ExtractionResult(
-        document_id="sha256:x",
-        source_file=SAMPLE_PDF.name,
-        extracted_at="2026-01-01T00:00:00Z",
-        fields={},
+
+    enriched, observations, warning = granite_vision.enrich_document(
+        SAMPLE_PDF, doc, vision_fn=broken_vision_fn
     )
 
-    updated = granite_vision.apply_to_result(SAMPLE_PDF, doc, result, vision_fn=broken_vision_fn)
+    assert enriched is doc
+    assert observations == []
+    assert warning is not None
+    assert "vision" in warning.lower()
 
-    assert updated.metrics == []
-    assert any("vision" in w.lower() for w in updated.extraction_warnings)
+
+def test_enriched_document_lets_qwen_local_map_a_vision_recovered_label_to_a_canonical_field(
+    tmp_path,
+):
+    # the actual bridge: a vision-recovered label/value pair becomes a
+    # normal key_value element, and qwen_local maps it to a canonical field
+    # using its existing chunk-and-map logic -- no vision-specific code in
+    # qwen_local itself
+    from ai_oversight.extractors import qwen_local
+
+    pdf_path = _make_scanned_pdf(tmp_path)
+
+    def fake_vision(image_bytes: bytes, task: str) -> str:
+        return (
+            '[{"cells": ['
+            '{"row": 1, "col": 1, "type": "header", "content": "APPLICATION ID"}, '
+            '{"row": 1, "col": 2, "type": "data", "content": "EXT-MRG-2026-031"}'
+            "]}]"
+        )
+
+    doc = ParsedDocument(document_id="sha256:x", filename=pdf_path.name, format="pdf", elements=[])
+    enriched, _observations, _warning = granite_vision.enrich_document(pdf_path, doc, vision_fn=fake_vision)
+
+    kv_element = next(el for el in enriched.elements if el.type == "key_value")
+
+    def fake_generate(prompt: str) -> str:
+        assert "APPLICATION ID" in prompt
+        assert kv_element.element_id in prompt
+        return (
+            f'{{"submission_id": {{"value": "EXT-MRG-2026-031", '
+            f'"element_id": "{kv_element.element_id}"}}}}'
+        )
+
+    result = qwen_local.extract(enriched, generate_fn=fake_generate)
+
+    field = result.fields["submission_id"]
+    assert field.value == "EXT-MRG-2026-031"
+    assert field.status == "extracted"
+    assert field.evidence[0].element_id == kv_element.element_id
 
 
-def test_apply_to_result_adds_a_warning_instead_of_crashing_when_model_unavailable(monkeypatch):
-    # see the comment on the missing-extra test above: simulate absence via
-    # sys.modules so this stays deterministic regardless of what's actually
-    # installed, rather than ever starting a real download
+def test_enrich_document_degrades_to_a_warning_when_model_unavailable(monkeypatch):
+    # simulate absence via sys.modules so this stays deterministic
+    # regardless of what's actually installed, rather than relying on a
+    # real missing package
     import sys
-
-    from ai_oversight.schemas import ExtractionResult
 
     monkeypatch.setitem(sys.modules, "mlx_vlm", None)
     monkeypatch.setitem(sys.modules, "transformers", None)
 
     doc = ParsedDocument(document_id="sha256:x", filename=SAMPLE_PDF.name, format="pdf", elements=[])
-    result = ExtractionResult(
-        document_id="sha256:x",
-        source_file=SAMPLE_PDF.name,
-        extracted_at="2026-01-01T00:00:00Z",
-        fields={},
-    )
 
-    updated = granite_vision.apply_to_result(SAMPLE_PDF, doc, result)
+    enriched, observations, warning = granite_vision.enrich_document(SAMPLE_PDF, doc)
 
-    assert updated.metrics == []
-    assert any("vision" in w.lower() for w in updated.extraction_warnings)
+    assert enriched is doc
+    assert observations == []
+    assert warning is not None
+    assert "vision" in warning.lower()
 
 
 def test_run_vision_pass_targets_a_fully_scanned_pdf_page_with_no_chart(tmp_path):

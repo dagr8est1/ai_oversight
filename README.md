@@ -51,19 +51,33 @@ uv run python -m ai_oversight extract data/samples/Sample_Internal_AI_Oversight_
 ```
 
 Add `--vision` to recover chart/table content Phase 1 could only flag (e.g.
-the PDF's vector-drawn monthly performance chart), using
-`ibm-granite/granite-vision-4.1-4b` via `<chart2csv>`/`<tables_json>`. It
-cross-checks the recovered numbers against the narrative value already
-extracted and flags (never silently resolves) a disagreement, via the same
-conflict detector Phase 2 uses for native charts. Native chart/table data
-(e.g. the PPTX's slide-5 chart) never needs vision — Phase 1 already
-extracted it exactly. Requires the `vision` extra; without it, `--vision`
-degrades to an extraction warning rather than failing the whole command, so
-it's safe to try on a constrained Mac:
+the PDF's vector-drawn monthly performance chart, or a fully-scanned page),
+using `ibm-granite/granite-vision-4.1-4b` via `<chart2csv>`/`<tables_json>`.
+Vision runs *before* the text backend, not after: its recovered content is
+converted into ordinary IR elements (a `chart` element for chart2csv, a
+`key_value` element per row for a 2-column table, a `table` element for a
+wider one) and merged into the document, so `rules` or `qwen_local` picks it
+up through their normal processing — a recovered chart feeds the same
+conflict check a native chart does, and a recovered label/value pair gets
+mapped to a canonical field by whichever backend is semantically capable of
+it. `rules` only matches by numbered `field_id`, so it ignores vision-derived
+elements (they have none); `--backend qwen_local --vision` is what actually
+maps vision-recovered, arbitrarily-worded labels (e.g. "APPLICATION ID",
+"SUBMITTING FIRM") to the 22 canonical fields. The raw recovered content is
+also retained in full on `vision_observations`, independent of whether
+anything maps to a field. Native chart/table data (e.g. the PPTX's slide-5
+chart) never needs vision — Phase 1 already extracted it exactly. Requires
+the `vision` extra; without it, `--vision` degrades to an extraction warning
+rather than failing the whole command, so it's safe to try on a constrained
+Mac:
 
 ```bash
 uv sync --extra vision
 uv run python -m ai_oversight extract data/samples/Sample_Internal_AI_Oversight_Report.pdf --vision --out outputs/internal.vision.json
+
+# the combination that maps vision-recovered labels to the 22 fields:
+uv sync --extra llm --extra vision
+uv run python -m ai_oversight extract data/samples/Vision_Required_Internal_AI_Risk_Report.pdf --backend qwen_local --vision --out outputs/internal.vision_qwen.json
 ```
 
 ## Configuration
@@ -80,35 +94,42 @@ no network access:
 
 ## Known limitations (Phase 3 — vision extraction)
 
-- `build_default_vision_fn`'s real model-loading code (mlx-vlm on Apple
-  Silicon, transformers elsewhere) is implemented but unverified by an
-  actual run in this session — the `vision` extra and its ~8GB weights were
-  deliberately not downloaded. All routing, cropping, and defensive-parsing
-  logic is tested via an injected fake vision call instead.
+- Verified end-to-end with the real `ibm-granite/granite-vision-4.1-4b`
+  model (not just an injected fake vision call) against the two
+  `Vision_Required_*` sample fixtures: real recovered table/chart content
+  from both a fully-scanned PDF and a PPTX with picture-only slides. The
+  `qwen_local` + `--vision` combination was also verified end-to-end this
+  way, mapping recovered labels like "APPLICATION ID" to `submission_id`.
+- `--vision` without `--backend qwen_local` recovers content into
+  `vision_observations` and (for chart2csv) `metrics`, but `rules` has no
+  way to map an arbitrarily-worded recovered label to a canonical field
+  (it only matches by numbered `field_id`) — the 22 `fields` stay as
+  whatever `rules` found natively, which is often nothing on a fully
+  scanned/picture-only document.
 - PDF chart cropping renders the gridline-cluster's own bounding box (plus a
   margin) at 2x zoom, not the whole page; it does not yet try multiple crop
   sizes if the model misreads a cramped legend or axis label.
 - A PPTX picture shape is always routed to `<tables_json>`, never
   `<chart2csv>` — there's no signal in a bare picture shape to tell which
-  task fits, and neither real sample contains one (only the unit tests do).
+  task fits, and neither original sample contains one (only the
+  `Vision_Required_*` fixtures and the unit tests do).
 - Vision-recovered metrics are cross-checked only against the single
   already-extracted narrative value for `model_performance`, not against the
   chart's own native data labels when present as text (e.g. the PDF page 3's
   axis values, already captured as plain text in Phase 1) — a source-first
   three-way check (native labels, narrative, vision) is not yet implemented.
-- A vision-recovered chart's raw response, crop bounding box, and per-row
-  provenance are not retained in `ExtractionResult` — only the derived
-  `MetricObservation`s are. `VisionObservation` exists but isn't surfaced in
-  the output, so a vision run can't be independently audited from the JSON
-  alone yet.
-- `_metrics_from_chart_observation` picks the "latest" chart2csv value by
-  row order, not by parsing and sorting the period column — a model that
-  returns rows out of chronological order would pick the wrong "latest"
-  value for conflict comparison. It also doesn't accept a `%`-suffixed cell
-  or flag an unparseable one.
+- The chart2csv-to-chart-element conversion picks the "latest" period by row
+  order (via the same `collect_metrics`/`detect_performance_conflicts` both
+  backends already use for native charts), not by parsing and sorting the
+  period column — a model that returns rows out of chronological order would
+  pick the wrong "latest" value for conflict comparison.
 - Vision-derived metrics aren't flagged as estimates in their own right
   (PLAN.md Section 9 asks to treat them as such) — they're only flagged
   indirectly, via a conflict, if they disagree with the narrative.
+- A wide (>2-column) recovered table becomes one generic `table` element
+  (e.g. an incident or control list) that `qwen_local` sees as context but
+  doesn't map cell-by-cell to a field; only 2-column label/value tables get
+  mapped as individual canonical-field candidates.
 - `normalize_risk_rating`'s inherent/residual capture can still cross a
   clause boundary on unusual wording (e.g. "Inherent rating TBD; residual
   rating MEDIUM. Prior residual LOW" misreads which value is inherent vs.

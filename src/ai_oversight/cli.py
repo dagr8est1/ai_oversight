@@ -95,14 +95,28 @@ def extract(
 
     parsed = _parse_document(document)
 
+    vision_observations = []
+    vision_warning = None
+    backend_input = parsed
+    if vision:
+        backend_input, vision_observations, vision_warning = granite_vision.enrich_document(document, parsed)
+
     try:
-        result = backend_fn(parsed)
+        result = backend_fn(backend_input)
     except Exception as exc:
         typer.echo(f"extraction failed: {exc}", err=True)
         raise typer.Exit(code=1) from exc
 
     if vision:
-        result = granite_vision.apply_to_result(document, parsed, result)
+        result.vision_observations = vision_observations
+        for observation in vision_observations:
+            if observation.status != "ok":
+                result.extraction_warnings.append(
+                    f"page/slide {observation.page_or_slide}: vision {observation.task} "
+                    f"needs_review: {observation.note}"
+                )
+        if vision_warning:
+            result.extraction_warnings.append(vision_warning)
 
     out.parent.mkdir(parents=True, exist_ok=True)
     json_writer.write(result, out)

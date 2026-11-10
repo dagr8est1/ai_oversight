@@ -7,9 +7,8 @@ from pathlib import Path
 
 from ai_oversight.config import Settings
 from ai_oversight.parsers import pdf_parser
-from ai_oversight.parsers.document_ir import ParsedDocument
-from ai_oversight.processing.merge import detect_performance_conflicts, normalize_metric_key
-from ai_oversight.schemas import ExtractionResult, MetricObservation, VisionObservation
+from ai_oversight.parsers.document_ir import Element, ParsedDocument
+from ai_oversight.schemas import VisionObservation
 
 # (image_bytes, task_tag) -> raw text response, e.g. task_tag="<chart2csv>"
 VisionFn = Callable[[bytes, str], str]
@@ -158,84 +157,166 @@ def _run_pptx_vision(document_path: Path, vision_fn: VisionFn) -> list[VisionObs
     return observations
 
 
-def apply_to_result(
+def enrich_document(
     document_path: Path,
     doc: ParsedDocument,
-    result: ExtractionResult,
     *,
     vision_fn: VisionFn | None = None,
     settings: Settings | None = None,
-) -> ExtractionResult:
-    """Opt-in vision pass: recovers chart/table data Phase 1 could only warn
-    about, cross-checks it against the already-extracted narrative, and
-    flags (never silently resolves) a disagreement. Never raises -- an
-    unavailable model degrades to a `needs_review`-style warning so a
-    constrained Mac still gets a usable (if vision-less) result.
+) -> tuple[ParsedDocument, list[VisionObservation], str | None]:
+    """Run the vision pass and merge its recovered content into the IR as
+    ordinary elements (chart/key_value/table), so whichever text backend
+    runs next (rules or qwen_local) sees vision-recovered content the same
+    way it already sees native content -- no backend-specific vision code
+    needed; a recovered chart feeds the same collect_metrics/conflict-check
+    path a native chart does, and a recovered label/value pair becomes a
+    normal key_value element qwen_local can map semantically.
+
+    Returns (document_for_backend, observations, warning). Never raises: on
+    any failure (missing extra, offline, OOM, a generate error), returns the
+    original document unchanged, no observations, and a warning message for
+    the caller to attach to its result -- so a constrained Mac still gets a
+    usable, vision-less result instead of a crash.
     """
     try:
         vision_fn = vision_fn or build_default_vision_fn(settings)
         observations = run_vision_pass(document_path, doc, vision_fn)
-    except Exception as exc:  # noqa: BLE001 -- deliberately blind, see comment below
-        # anything here -- missing extra, offline/missing weights, OOM, a
-        # generate error -- must degrade to a warning, never break the
-        # baseline result the text backend already produced successfully.
-        result.extraction_warnings.append(f"vision pass requested but unavailable: {exc}")
-        return result
+    except Exception as exc:  # noqa: BLE001 -- deliberately blind, see docstring
+        return doc, [], f"vision pass requested but unavailable: {exc}"
 
-    # retained in full -- raw response, parsed content and provenance --
-    # regardless of whether anything downstream (currently just chart2csv's
-    # metrics merge) consumes it, so a vision run can be audited from the
-    # output alone instead of only through its side effects
-    result.vision_observations.extend(observations)
+    vision_elements = observations_to_elements(observations)
+    enriched = doc.model_copy(update={"elements": [*doc.elements, *vision_elements]})
+    return enriched, observations, None
 
-    vision_metrics: list[MetricObservation] = []
+
+def observations_to_elements(observations: list[VisionObservation]) -> list[Element]:
+    """Convert successful vision observations into IR elements.
+
+    A chart2csv result becomes one `chart` element (categories/series),
+    feeding the same metrics/conflict-detection path a native chart does. A
+    tables_json result becomes one `key_value` element per row for a 2-column
+    table (a label/value pair qwen_local can map to a canonical field), or
+    one `table` element for a wider table (a record list like an incident or
+    control table, not a single field value).
+    """
+    elements: list[Element] = []
     for observation in observations:
         if observation.status != "ok":
-            result.extraction_warnings.append(
-                f"page/slide {observation.page_or_slide}: vision {observation.task} needs_review: "
-                f"{observation.note}"
-            )
             continue
         if observation.task == "chart2csv":
-            vision_metrics.extend(_metrics_from_chart_observation(observation))
-
-    if not vision_metrics:
-        return result
-
-    result.metrics.extend(vision_metrics)
-    # favor native data: this only ever flags a disagreement against the
-    # narrative value already extracted, never overwrites it with the
-    # vision-derived number.
-    result.review_flags.extend(detect_performance_conflicts(result.fields, vision_metrics))
-    return result
+            element = _chart_element(observation)
+            if element is not None:
+                elements.append(element)
+        elif observation.task == "tables_json":
+            elements.extend(_table_elements(observation))
+    return elements
 
 
-def _metrics_from_chart_observation(observation: VisionObservation) -> list[MetricObservation]:
-    metrics: list[MetricObservation] = []
-    if not isinstance(observation.parsed, list):
-        return metrics
+def _chart_element(observation: VisionObservation) -> Element | None:
+    if not isinstance(observation.parsed, list) or not observation.parsed:
+        return None
+
+    period_key: str | None = None
+    categories: list[str] = []
+    series_values: dict[str, list[float | None]] = {}
     for row in observation.parsed:
         if not isinstance(row, dict) or not row:
             continue
-        period_key, period = next(iter(row.items()))
+        if period_key is None:
+            period_key = next(iter(row))
+        categories.append(row.get(period_key))
         for column, raw_value in row.items():
             if column == period_key:
                 continue
             try:
-                value = float(raw_value)
+                value: float | None = float(raw_value)
             except (TypeError, ValueError):
-                continue
-            metrics.append(
-                MetricObservation(
-                    field="model_performance",
-                    name=normalize_metric_key(column),
-                    period=str(period),
-                    value=value,
-                    source_element_id=f"vision:{observation.source_element_id}",
-                    page_or_slide=observation.page_or_slide,
-                )
+                value = None
+            series_values.setdefault(column, []).append(value)
+
+    if not categories:
+        return None
+
+    series = [{"name": name, "values": values} for name, values in series_values.items()]
+    return Element(
+        element_id=f"{observation.source_element_id}.chart",
+        type="chart",
+        page_or_slide=observation.page_or_slide,
+        method=f"granite_vision_{observation.task}",
+        content={"categories": categories, "series": series},
+    )
+
+
+def _table_elements(observation: VisionObservation) -> list[Element]:
+    tables = observation.parsed if isinstance(observation.parsed, list) else [observation.parsed]
+    elements: list[Element] = []
+    for table_index, table in enumerate(tables):
+        if not isinstance(table, dict):
+            continue
+        cells = table.get("cells")
+        if not cells:
+            continue
+        by_row = _cells_by_row(cells)
+        if not by_row:
+            continue
+        max_col = max(col for row in by_row.values() for col in row)
+        if max_col <= 2:
+            elements.extend(_key_value_elements(observation, by_row, table_index))
+        else:
+            element = _table_element(observation, by_row, table_index)
+            if element is not None:
+                elements.append(element)
+    return elements
+
+
+def _cells_by_row(cells: list[dict]) -> dict[int, dict[int, str]]:
+    by_row: dict[int, dict[int, str]] = {}
+    for cell in cells:
+        row, col = cell.get("row"), cell.get("col")
+        if row is None or col is None:
+            continue
+        by_row.setdefault(row, {})[col] = cell.get("content")
+    return by_row
+
+
+def _key_value_elements(
+    observation: VisionObservation, by_row: dict[int, dict[int, str]], table_index: int
+) -> list[Element]:
+    elements: list[Element] = []
+    for row_index in sorted(by_row):
+        label, value = by_row[row_index].get(1), by_row[row_index].get(2)
+        if not label or not value:
+            continue
+        elements.append(
+            Element(
+                element_id=f"{observation.source_element_id}.table{table_index}.row{row_index}",
+                type="key_value",
+                page_or_slide=observation.page_or_slide,
+                method=f"granite_vision_{observation.task}",
+                content={"label": str(label), "value": str(value)},
+                raw_text=f"{label}: {value}",
             )
-    return metrics
+        )
+    return elements
+
+
+def _table_element(
+    observation: VisionObservation, by_row: dict[int, dict[int, str]], table_index: int
+) -> Element | None:
+    rows = []
+    for row_index in sorted(by_row):
+        row_cols = by_row[row_index]
+        max_col = max(row_cols)
+        rows.append([str(row_cols.get(col) or "") for col in range(1, max_col + 1)])
+    if not rows:
+        return None
+    return Element(
+        element_id=f"{observation.source_element_id}.table{table_index}",
+        type="table",
+        page_or_slide=observation.page_or_slide,
+        method=f"granite_vision_{observation.task}",
+        content={"rows": rows},
+    )
 
 
 def build_default_vision_fn(settings: Settings | None) -> VisionFn:
