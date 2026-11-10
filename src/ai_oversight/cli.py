@@ -72,6 +72,32 @@ def parse(
 
 
 @app.command()
+def vision(
+    document: Path = typer.Argument(..., exists=True, help="PDF or PPTX report to run the vision pass on."),
+    out: Path = typer.Option(..., "--out", help="Where to write the raw vision observations JSON."),
+) -> None:
+    """Run only the Granite Vision pass and save its raw observations (no
+    text backend). Pairs with `extract --vision-cache`: the slow model load
+    + inference happens once here, and iterating on how that output maps to
+    fields can re-run the fast text backend alone, as many times as needed,
+    against the same saved observations.
+    """
+    parsed = _parse_document(document)
+    try:
+        vision_fn = granite_vision.build_default_vision_fn(None)
+        observations = granite_vision.run_vision_pass(document, parsed, vision_fn)
+    except Exception as exc:
+        detail = str(exc)
+        message = f"{type(exc).__name__}: {detail}" if detail else type(exc).__name__
+        typer.echo(f"vision pass failed: {message}", err=True)
+        raise typer.Exit(code=1) from exc
+
+    out.parent.mkdir(parents=True, exist_ok=True)
+    granite_vision.save_observations(observations, out)
+    typer.echo(f"wrote {out} ({len(observations)} observation(s))")
+
+
+@app.command()
 def extract(
     document: Path = typer.Argument(..., exists=True, help="PDF or PPTX report to extract from."),
     backend: str = typer.Option("rules", "--backend", help="rules (default, no model) or qwen_local."),
@@ -81,10 +107,18 @@ def extract(
         help="Also recover chart/table data Phase 1 could only flag, via Granite Vision. "
         "Defaults to the AI_OVERSIGHT_VISION_ENABLED env var.",
     ),
+    vision_cache: Path = typer.Option(
+        None,
+        "--vision-cache",
+        help="Reuse vision observations saved by the `vision` command instead of "
+        "re-running the model. Implies --vision.",
+    ),
     out: Path = typer.Option(..., "--out", help="Where to write the extraction result JSON."),
 ) -> None:
     """Extract the 22 canonical fields, writing <out> and a <out>.review.md summary."""
-    if vision is None:
+    if vision_cache is not None:
+        vision = True
+    elif vision is None:
         vision = Settings.from_env().vision_enabled
 
     backend_fn = _BACKENDS.get(backend)
@@ -98,7 +132,10 @@ def extract(
     vision_observations = []
     vision_warning = None
     backend_input = parsed
-    if vision:
+    if vision_cache is not None:
+        vision_observations = granite_vision.load_observations(vision_cache)
+        backend_input = granite_vision.enrich_document_from_observations(parsed, vision_observations)
+    elif vision:
         backend_input, vision_observations, vision_warning = granite_vision.enrich_document(document, parsed)
 
     try:

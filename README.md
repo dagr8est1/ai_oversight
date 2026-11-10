@@ -80,6 +80,21 @@ uv sync --extra llm --extra vision
 uv run python -m ai_oversight extract data/samples/Vision_Required_Internal_AI_Risk_Report.pdf --backend qwen_local --vision --out outputs/internal.vision_qwen.json
 ```
 
+The vision pass (loading an ~8GB model, running inference per page/shape) is
+by far the slowest step, and it's deterministic given the same model and
+input — rerunning it on every attempt while iterating on how its output gets
+*mapped* to fields (prompt wording, element conversion) wastes most of that
+time. `vision` runs only the vision pass and saves its raw observations
+(plain JSON, the same `VisionObservation` shape used everywhere else in this
+project); `extract --vision-cache` then reuses that file and never touches
+the vision model at all, so the fast text-backend step can be rerun as many
+times as needed:
+
+```bash
+uv run python -m ai_oversight vision data/samples/Vision_Required_Internal_AI_Risk_Report.pdf --out outputs/internal.vision_observations.json
+uv run python -m ai_oversight extract data/samples/Vision_Required_Internal_AI_Risk_Report.pdf --backend qwen_local --vision-cache outputs/internal.vision_observations.json --out outputs/internal.vision_qwen.json
+```
+
 ## Configuration
 
 All settings are environment variables; defaults require no credentials and

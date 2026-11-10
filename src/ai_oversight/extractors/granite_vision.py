@@ -184,9 +184,30 @@ def enrich_document(
     except Exception as exc:  # noqa: BLE001 -- deliberately blind, see docstring
         return doc, [], f"vision pass requested but unavailable: {exc}"
 
+    return enrich_document_from_observations(doc, observations), observations, None
+
+
+def enrich_document_from_observations(
+    doc: ParsedDocument, observations: list[VisionObservation]
+) -> ParsedDocument:
+    """Merge already-recovered vision observations into the IR, without
+    running the vision model at all. Pairs with `save_observations`/
+    `load_observations`: the vision pass (slow, a real model) runs once via
+    the `vision` CLI command, and iterating on how its output gets mapped
+    to canonical fields (prompt changes, element-conversion changes) can
+    then re-run the fast text backend alone, as many times as needed,
+    against the same cached observations.
+    """
     vision_elements = observations_to_elements(observations)
-    enriched = doc.model_copy(update={"elements": [*doc.elements, *vision_elements]})
-    return enriched, observations, None
+    return doc.model_copy(update={"elements": [*doc.elements, *vision_elements]})
+
+
+def save_observations(observations: list[VisionObservation], path: Path) -> None:
+    path.write_text(json.dumps([obs.model_dump(mode="json") for obs in observations], indent=2))
+
+
+def load_observations(path: Path) -> list[VisionObservation]:
+    return [VisionObservation.model_validate(item) for item in json.loads(path.read_text())]
 
 
 def observations_to_elements(observations: list[VisionObservation]) -> list[Element]:

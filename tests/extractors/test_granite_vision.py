@@ -396,3 +396,62 @@ def test_run_vision_pass_targets_pptx_picture_shapes(tmp_path):
     assert len(observations) == 1
     assert observations[0].task == "tables_json"
     assert observations[0].page_or_slide == 1
+
+
+def test_save_and_load_observations_round_trips(tmp_path):
+    from ai_oversight.schemas import VisionObservation
+
+    observations = [
+        VisionObservation(
+            task="tables_json",
+            source_element_id="page2.vision_scan",
+            page_or_slide=2,
+            raw_response="...",
+            parsed=[{"cells": [{"row": 1, "col": 1, "content": "X"}]}],
+            status="ok",
+        ),
+        VisionObservation(
+            task="chart2csv",
+            source_element_id="page3.vision_crop",
+            page_or_slide=3,
+            raw_response="garbage",
+            parsed=None,
+            status="needs_review",
+            note="no CSV rows parsed from model output",
+        ),
+    ]
+    path = tmp_path / "vision_observations.json"
+
+    granite_vision.save_observations(observations, path)
+    loaded = granite_vision.load_observations(path)
+
+    assert loaded == observations
+
+
+def test_enrich_document_from_observations_merges_elements_without_running_vision():
+    from ai_oversight.schemas import VisionObservation
+
+    doc = ParsedDocument(document_id="sha256:x", filename="x.pdf", format="pdf", elements=[])
+    observations = [
+        VisionObservation(
+            task="tables_json",
+            source_element_id="slide2.3",
+            page_or_slide=2,
+            raw_response="...",
+            parsed=[
+                {
+                    "cells": [
+                        {"row": 1, "col": 1, "type": "header", "content": "STATUS"},
+                        {"row": 1, "col": 2, "type": "data", "content": "PILOT"},
+                    ]
+                }
+            ],
+            status="ok",
+        )
+    ]
+
+    enriched = granite_vision.enrich_document_from_observations(doc, observations)
+
+    kv_elements = [el for el in enriched.elements if el.type == "key_value"]
+    assert len(kv_elements) == 1
+    assert kv_elements[0].content == {"label": "STATUS", "value": "PILOT"}
