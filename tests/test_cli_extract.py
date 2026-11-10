@@ -1,4 +1,5 @@
 import json
+import sys
 from pathlib import Path
 
 from typer.testing import CliRunner
@@ -43,7 +44,14 @@ def test_extract_rejects_unknown_backend_with_a_friendly_error(tmp_path):
     assert "Traceback" not in result.output
 
 
-def test_extract_qwen_local_without_llm_extra_gives_a_friendly_error(tmp_path):
+def test_extract_qwen_local_without_llm_extra_gives_a_friendly_error(tmp_path, monkeypatch):
+    # simulate absence via sys.modules so this test stays deterministic
+    # whether or not the `llm` extra happens to be installed in this
+    # environment -- otherwise, once installed, this would try to load the
+    # real multi-GB model instead of exercising the friendly-error path
+    monkeypatch.setitem(sys.modules, "transformers", None)
+    monkeypatch.setitem(sys.modules, "torch", None)
+
     out = tmp_path / "internal.json"
 
     result = runner.invoke(app, ["extract", str(SAMPLE_PDF), "--backend", "qwen_local", "--out", str(out)])
@@ -54,6 +62,11 @@ def test_extract_qwen_local_without_llm_extra_gives_a_friendly_error(tmp_path):
 
 
 def test_extract_honors_ai_oversight_vision_enabled_env_var(tmp_path, monkeypatch):
+    # block the real vision deps so this exercises the "unavailable" path
+    # deterministically rather than the real model, whether or not the
+    # `vision` extra happens to be installed in this environment
+    monkeypatch.setitem(sys.modules, "mlx_vlm", None)
+    monkeypatch.setitem(sys.modules, "transformers", None)
     monkeypatch.setenv("AI_OVERSIGHT_VISION_ENABLED", "true")
     out = tmp_path / "internal.json"
 
@@ -65,10 +78,14 @@ def test_extract_honors_ai_oversight_vision_enabled_env_var(tmp_path, monkeypatc
     assert any("vision" in w.lower() for w in data["extraction_warnings"])
 
 
-def test_extract_vision_without_vision_extra_degrades_to_a_warning_not_a_crash(tmp_path):
-    # no vision model installed in this environment -- --vision must still
-    # produce a usable (if vision-less) result, per PLAN.md Phase 3's
-    # "provide a no-VLM result for constrained Macs with needs_review warnings"
+def test_extract_vision_without_vision_extra_degrades_to_a_warning_not_a_crash(tmp_path, monkeypatch):
+    # --vision must still produce a usable (if vision-less) result when the
+    # model is unavailable, per PLAN.md Phase 3's "provide a no-VLM result
+    # for constrained Macs with needs_review warnings" -- blocked here via
+    # sys.modules so the test is deterministic regardless of whether the
+    # `vision` extra happens to be installed in this environment
+    monkeypatch.setitem(sys.modules, "mlx_vlm", None)
+    monkeypatch.setitem(sys.modules, "transformers", None)
     out = tmp_path / "internal.json"
 
     result = runner.invoke(app, ["extract", str(SAMPLE_PDF), "--vision", "--out", str(out)])

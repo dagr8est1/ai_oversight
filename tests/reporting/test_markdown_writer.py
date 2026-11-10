@@ -7,6 +7,7 @@ from ai_oversight.schemas import (
     ExtractionResult,
     FieldValue,
     ReviewFlag,
+    VisionObservation,
 )
 
 
@@ -55,3 +56,22 @@ def test_render_lists_extraction_warnings():
     result = _result(extraction_warnings=["page 3: vector drawing detected (chart-like)"])
     md = render(result)
     assert "vector drawing detected" in md
+
+
+def test_render_lists_vision_observations_with_their_parsed_content():
+    result = _result(
+        vision_observations=[
+            VisionObservation(
+                task="tables_json",
+                source_element_id="page1.vision_scan",
+                page_or_slide=1,
+                raw_response='[{"Field": "Submission ID", "Value": "AI-1"}]',
+                parsed=[{"Field": "Submission ID", "Value": "AI-1"}],
+                status="ok",
+            )
+        ]
+    )
+    md = render(result)
+    assert "tables_json" in md
+    assert "page1.vision_scan" in md
+    assert "Submission ID" in md

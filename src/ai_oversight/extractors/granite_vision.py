@@ -182,6 +182,12 @@ def apply_to_result(
         result.extraction_warnings.append(f"vision pass requested but unavailable: {exc}")
         return result
 
+    # retained in full -- raw response, parsed content and provenance --
+    # regardless of whether anything downstream (currently just chart2csv's
+    # metrics merge) consumes it, so a vision run can be audited from the
+    # output alone instead of only through its side effects
+    result.vision_observations.extend(observations)
+
     vision_metrics: list[MetricObservation] = []
     for observation in observations:
         if observation.status != "ok":
@@ -257,8 +263,9 @@ def _build_mlx_vision_fn(settings: Settings, mlx_vlm_module) -> VisionFn:
 
     def vision_fn(image_bytes: bytes, task: str) -> str:
         image = _bytes_to_temp_image(image_bytes)
-        prompt = mlx_vlm_module.prompt_utils.apply_chat_template(processor, config, task, num_images=1)
-        return mlx_vlm_module.generate(model, processor, prompt, [image], verbose=False)
+        prompt = mlx_vlm_module.apply_chat_template(processor, config, task, num_images=1)
+        result = mlx_vlm_module.generate(model, processor, prompt, [image], verbose=False)
+        return result.text
 
     return vision_fn
 

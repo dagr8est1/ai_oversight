@@ -37,6 +37,14 @@ def render(result: ExtractionResult) -> str:
     else:
         lines.append("- none")
 
+    if result.vision_observations:
+        lines += ["", "## Vision observations"]
+        for obs in result.vision_observations:
+            lines.append(
+                f"- [{obs.task}] {obs.source_element_id} (page/slide {obs.page_or_slide}, "
+                f"status={obs.status}): {obs.parsed if obs.parsed is not None else obs.note}"
+            )
+
     lines += ["", "## Extraction warnings"]
     if result.extraction_warnings:
         for warning in result.extraction_warnings:

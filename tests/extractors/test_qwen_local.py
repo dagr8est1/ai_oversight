@@ -233,7 +233,16 @@ def test_an_echoed_example_object_is_not_mistaken_for_the_real_answer():
     assert result.fields["submission_id"].value == "AI-INT-2026-041"
 
 
-def test_default_generate_fn_raises_friendly_error_when_llm_extra_missing():
+def test_default_generate_fn_raises_friendly_error_when_llm_extra_missing(monkeypatch):
+    # simulate absence via sys.modules so this stays deterministic whether
+    # or not the `llm` extra happens to be installed in this environment --
+    # otherwise, once installed, this would try to load the real multi-GB
+    # model instead of exercising the friendly-error path
+    import sys
+
+    monkeypatch.setitem(sys.modules, "torch", None)
+    monkeypatch.setitem(sys.modules, "transformers", None)
+
     doc = _doc_with_one_page("some text")
 
     with pytest.raises(qwen_local.ModelNotAvailableError, match="llm"):

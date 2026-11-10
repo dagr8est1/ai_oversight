@@ -92,3 +92,4 @@ class ExtractionResult(BaseModel):
     incidents: list[dict[str, Any]] = Field(default_factory=list)
     review_flags: list[ReviewFlag] = Field(default_factory=list)
     extraction_warnings: list[str] = Field(default_factory=list)
+    vision_observations: list[VisionObservation] = Field(default_factory=list)

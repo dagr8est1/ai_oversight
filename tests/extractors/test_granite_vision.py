@@ -10,6 +10,23 @@ from ai_oversight.parsers.document_ir import ParsedDocument
 SAMPLE_PDF = Path(__file__).parents[2] / "data" / "samples" / "Sample_Internal_AI_Oversight_Report.pdf"
 
 
+def _make_scanned_pdf(tmp_path) -> Path:
+    import io
+
+    import pymupdf
+    from PIL import Image
+
+    pdf_path = tmp_path / "scanned.pdf"
+    doc = pymupdf.open()
+    page = doc.new_page()
+    png_bytes = io.BytesIO()
+    Image.new("RGB", (100, 100), color="red").save(png_bytes, format="PNG")
+    page.insert_image(pymupdf.Rect(0, 0, 100, 100), stream=png_bytes.getvalue())
+    doc.save(pdf_path)
+    doc.close()
+    return pdf_path
+
+
 def test_extract_chart_parses_clean_csv():
     def fake_vision(image_bytes: bytes, task: str) -> str:
         assert task == "<chart2csv>"
@@ -67,7 +84,18 @@ def test_extract_table_flags_malformed_json_as_needs_review():
     assert obs.parsed is None
 
 
-def test_default_vision_fn_raises_friendly_error_when_vision_extra_missing():
+def test_default_vision_fn_raises_friendly_error_when_vision_extra_missing(monkeypatch):
+    # simulate absence via sys.modules rather than relying on the real
+    # environment not having mlx_vlm/transformers installed -- this test
+    # must stay deterministic whether or not the `vision` extra happens to
+    # be installed (installing it, as this project's own README documents,
+    # should never make this test start a real multi-GB download instead
+    # of exercising the "missing dependency" error path)
+    import sys
+
+    monkeypatch.setitem(sys.modules, "mlx_vlm", None)
+    monkeypatch.setitem(sys.modules, "transformers", None)
+
     with pytest.raises(granite_vision.VisionModelNotAvailableError, match="vision"):
         granite_vision.build_default_vision_fn(None)
 
@@ -107,6 +135,35 @@ def test_apply_to_result_adds_vision_metrics_and_flags_a_conflict(tmp_path):
     assert len(updated.metrics) == 4
     assert updated.fields["model_performance"].status == "conflicting"
     assert any(flag.field == "model_performance" for flag in updated.review_flags)
+    # the raw observation itself is retained too, not just the derived metrics
+    assert len(updated.vision_observations) == 1
+    assert updated.vision_observations[0].task == "chart2csv"
+    assert updated.vision_observations[0].status == "ok"
+
+
+def test_apply_to_result_retains_a_successful_tables_json_observation(tmp_path):
+    # a tables_json result (e.g. from a fully-scanned page) has no
+    # chart-specific merge path into metrics/fields -- it must still be
+    # retained on the result, not silently discarded just because nothing
+    # downstream consumes it yet
+    from ai_oversight.schemas import ExtractionResult
+
+    def fake_vision(image_bytes: bytes, task: str) -> str:
+        return '[{"Field": "Submission ID", "Value": "AI-1"}]'
+
+    pdf_path = _make_scanned_pdf(tmp_path)
+    doc = ParsedDocument(document_id="sha256:x", filename=pdf_path.name, format="pdf", elements=[])
+    result = ExtractionResult(
+        document_id="sha256:x", source_file=pdf_path.name, extracted_at="2026-01-01T00:00:00Z", fields={}
+    )
+
+    updated = granite_vision.apply_to_result(pdf_path, doc, result, vision_fn=fake_vision)
+
+    assert len(updated.vision_observations) == 1
+    obs = updated.vision_observations[0]
+    assert obs.task == "tables_json"
+    assert obs.status == "ok"
+    assert obs.parsed == [{"Field": "Submission ID", "Value": "AI-1"}]
 
 
 def test_apply_to_result_degrades_to_a_warning_on_any_model_failure_not_just_missing_extra():
@@ -132,8 +189,16 @@ def test_apply_to_result_degrades_to_a_warning_on_any_model_failure_not_just_mis
     assert any("vision" in w.lower() for w in updated.extraction_warnings)
 
 
-def test_apply_to_result_adds_a_warning_instead_of_crashing_when_model_unavailable():
+def test_apply_to_result_adds_a_warning_instead_of_crashing_when_model_unavailable(monkeypatch):
+    # see the comment on the missing-extra test above: simulate absence via
+    # sys.modules so this stays deterministic regardless of what's actually
+    # installed, rather than ever starting a real download
+    import sys
+
     from ai_oversight.schemas import ExtractionResult
+
+    monkeypatch.setitem(sys.modules, "mlx_vlm", None)
+    monkeypatch.setitem(sys.modules, "transformers", None)
 
     doc = ParsedDocument(document_id="sha256:x", filename=SAMPLE_PDF.name, format="pdf", elements=[])
     result = ExtractionResult(
@@ -154,19 +219,7 @@ def test_run_vision_pass_targets_a_fully_scanned_pdf_page_with_no_chart(tmp_path
     # e.g. the whole page rendered as one raster image) must still be routed
     # to vision -- it just can't be routed via the gridline-chart heuristic,
     # since there's no vector content to detect at all
-    import io
-
-    import pymupdf
-    from PIL import Image
-
-    pdf_path = tmp_path / "scanned.pdf"
-    doc = pymupdf.open()
-    page = doc.new_page()
-    png_bytes = io.BytesIO()
-    Image.new("RGB", (100, 100), color="red").save(png_bytes, format="PNG")
-    page.insert_image(pymupdf.Rect(0, 0, 100, 100), stream=png_bytes.getvalue())
-    doc.save(pdf_path)
-    doc.close()
+    pdf_path = _make_scanned_pdf(tmp_path)
 
     def fake_vision(image_bytes: bytes, task: str) -> str:
         assert task == "<tables_json>"
