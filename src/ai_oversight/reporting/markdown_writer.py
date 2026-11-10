@@ -13,12 +13,12 @@ def render(result: ExtractionResult) -> str:
         "",
         "## Fields",
         "",
-        "| Field | Status | Value |",
-        "|---|---|---|",
+        "| Field | Status | Value | Confidence |",
+        "|---|---|---|---|",
     ]
     for name, field in result.fields.items():
         value = "" if field.value is None else str(field.value)
-        lines.append(f"| {name} | {field.status} | {value} |")
+        lines.append(f"| {name} | {field.status} | {value} | {field.confidence} |")
 
     if result.metrics:
         lines += ["", "## Metrics"]

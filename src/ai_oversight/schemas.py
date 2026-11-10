@@ -1,9 +1,26 @@
 from datetime import datetime
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, computed_field
 
 FieldStatus = Literal["extracted", "missing", "ambiguous", "conflicting", "needs_review"]
+
+# Non-overlapping confidence bands per status -- `needs_review` can never
+# out-rank `extracted` no matter how much evidence backs it, since their
+# ranges never touch. `missing` has no band: there's no value at all, so
+# its confidence is always 0.0, handled separately below.
+_CONFIDENCE_RANGE: dict[str, tuple[float, float]] = {
+    "conflicting": (0.15, 0.29),
+    "ambiguous": (0.30, 0.44),
+    "needs_review": (0.45, 0.70),
+    "extracted": (0.85, 1.00),
+}
+# how many pieces of evidence it takes to reach a band's ceiling
+_CORROBORATION_SATURATION = 3
+# for `conflicting` only: how many disagreeing sources it takes to fall
+# all the way to the band's floor -- more disagreement is a worse sign,
+# the opposite of every other status
+_CONFLICT_CONFUSION_SATURATION = 4
 
 # Exactly PLAN.md Section 5's 22 canonical fields, in their numbered order:
 # index 0 is field "01", index 21 is field "22".
@@ -80,6 +97,33 @@ class FieldValue(BaseModel):
     status: FieldStatus
     evidence: list[Evidence] = Field(default_factory=list)
     normalization_notes: str | None = None
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def confidence(self) -> float:
+        """A triage-level signal of how much a reviewer should trust this
+        field -- not a literal probability. Computed from `status` and
+        `evidence` (never a separate stored field, so it can't drift out
+        of sync at one of the many FieldValue(...) construction sites
+        across rules.py/qwen_local.py/merge.py/validate.py): each status
+        has a fixed, non-overlapping band, and more independent evidence
+        corroborating the accepted value moves it toward that band's
+        ceiling. `conflicting` is the exception -- more *disagreeing*
+        sources is a worse sign, so more evidence there moves it toward
+        the floor instead.
+        """
+        if self.status == "missing":
+            return 0.0
+        floor, ceiling = _CONFIDENCE_RANGE[self.status]
+        count = len(self.evidence)
+        if self.status == "conflicting":
+            span = _CONFLICT_CONFUSION_SATURATION - 2
+            confusion = max(_CONFLICT_CONFUSION_SATURATION - count, 0) / span
+            corroboration = min(confusion, 1.0)
+        else:
+            span = _CORROBORATION_SATURATION - 1
+            corroboration = max(0.0, min(count - 1, span) / span)
+        return round(floor + (ceiling - floor) * corroboration, 2)
 
 
 class MetricObservation(BaseModel):

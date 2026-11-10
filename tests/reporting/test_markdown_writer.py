@@ -43,6 +43,14 @@ def test_render_lists_every_field_status_and_value():
     assert "missing" in md  # at least one field stays missing in the fixture
 
 
+def test_render_lists_each_field_s_confidence():
+    md = render(_result())
+    assert "Confidence" in md
+    missing_field = CANONICAL_FIELDS[2]  # application_name, status "missing" in the fixture
+    assert "| submission_id | extracted | AI-INT-2026-041 | 0.85 |" in md
+    assert f"| {missing_field} | missing |  | 0.0 |" in md
+
+
 def test_render_lists_review_flags_as_suggestions_not_findings():
     result = _result(
         review_flags=[ReviewFlag(code="performance_conflict", field="model_performance", message="94 vs 92")]
