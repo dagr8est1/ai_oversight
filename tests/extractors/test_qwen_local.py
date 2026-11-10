@@ -168,6 +168,27 @@ def test_model_performance_value_is_normalized_and_shape_validated():
     assert field.status == "extracted"
 
 
+def test_prompt_includes_each_canonical_field_s_description_not_just_its_name():
+    # found via a real end-to-end run: given a key_value element labeled
+    # "RESIDUAL RISK", Qwen invented a JSON key "residual_risk" (echoing
+    # the source label) instead of picking "risk_rating" from the
+    # canonical list -- a bare snake_case name gave it nothing to match
+    # "residual risk" against. Each field's PLAN.md description should
+    # give the model a real chance at that association.
+    captured_prompts = []
+
+    def fake_generate(prompt: str) -> str:
+        captured_prompts.append(prompt)
+        return "{}"
+
+    doc = _doc_with_one_page("some excerpt")
+    qwen_local.extract(doc, generate_fn=fake_generate)
+
+    prompt = captured_prompts[0]
+    assert "risk_rating" in prompt
+    assert "inherent and residual" in prompt.lower()
+
+
 def test_prompt_warns_that_a_wide_table_is_a_record_list_not_a_field_value():
     # found via a real end-to-end run: Qwen pulled individual MITIGATION
     # cells out of a 5-row control-matrix table and confidently assigned

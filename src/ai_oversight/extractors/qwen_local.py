@@ -16,6 +16,7 @@ from ai_oversight.processing.merge import (
 )
 from ai_oversight.processing.validate import validate_field_shape
 from ai_oversight.schemas import (
+    CANONICAL_FIELD_DESCRIPTIONS,
     CANONICAL_FIELDS,
     Evidence,
     ExtractionResult,
@@ -193,12 +194,16 @@ def _element_text(element: Element) -> str:
 
 
 def _build_prompt(chunk: _Chunk, previous_error: str | None = None, previous_response: str | None = None) -> str:
-    field_list = ", ".join(CANONICAL_FIELDS)
+    field_descriptions = "\n".join(
+        f"- {name}: {CANONICAL_FIELD_DESCRIPTIONS[name]}" for name in CANONICAL_FIELDS
+    )
     excerpt = "\n".join(f"[{element_id}] {text}" for element_id, text in chunk.element_texts.items())
     base = (
         "You extract structured fields from an AI-governance report excerpt. "
         f'Respond with ONLY a JSON object: {{"field_name": {{"value": ..., "element_id": "..."}}}}. '
-        f"field_name must be one of: {field_list}. element_id must be one of the bracketed IDs "
+        "field_name must be exactly one of these field names (never a label or word taken "
+        f"from the excerpt itself, even if it seems to match):\n{field_descriptions}\n\n"
+        "element_id must be one of the bracketed IDs "
         "below, the one that actually states the value. Only include a key if this excerpt "
         'states that field. If a field is mentioned but unclear, use {"value": null, '
         '"element_id": "..."}. Never invent a value not stated in the excerpt. '

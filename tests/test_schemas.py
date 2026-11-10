@@ -2,6 +2,7 @@ import pytest
 from pydantic import ValidationError
 
 from ai_oversight.schemas import (
+    CANONICAL_FIELD_DESCRIPTIONS,
     CANONICAL_FIELDS,
     FIELD_ID_TO_NAME,
     Evidence,
@@ -19,6 +20,11 @@ def test_canonical_fields_has_22_entries_in_plan_order():
 def test_field_id_to_name_maps_two_digit_ids():
     assert FIELD_ID_TO_NAME["01"] == "submission_id"
     assert FIELD_ID_TO_NAME["22"] == "next_review_date"
+
+
+def test_every_canonical_field_has_a_description():
+    assert set(CANONICAL_FIELD_DESCRIPTIONS) == set(CANONICAL_FIELDS)
+    assert all(isinstance(d, str) and d for d in CANONICAL_FIELD_DESCRIPTIONS.values())
 
 
 def test_field_value_rejects_unknown_status():
