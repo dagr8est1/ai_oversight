@@ -361,16 +361,29 @@ def _resolve_field_candidates(name: str, entries: list[_Candidate]) -> tuple[Fie
     per-page candidates for one field: same conflict/substantiation/
     normalization rules either way. Returns (field, distinct_value_count)
     -- distinct_value_count is only >1 (and worth a review flag) when
-    candidates disagree; 0/1 both mean "no conflict"."""
-    distinct_values = {_stable_key(c.value) for c in entries}
-    evidence = [c.evidence for c in entries]
-    if len(distinct_values) > 1:
-        return FieldValue(value=entries[0].value, status="conflicting", evidence=evidence), len(distinct_values)
+    candidates disagree; 0/1 both mean "no conflict".
 
-    if not any(c.substantiated for c in entries):
+    Conflicts are only ever compared within a confidence tier -- a
+    verified (substantiated) citation always wins over a disagreeing
+    unverifiable one, never the other way around and never averaged into
+    a blanket "conflicting" -- found via a real run where a tentative,
+    table-sourced guess on one slide disagreed with an already-verified
+    key_value citation on another, and the old all-candidates-together
+    comparison downgraded the verified answer to `conflicting` and even
+    displayed the lower-confidence guess as the field's value.
+    """
+    substantiated = [c for c in entries if c.substantiated]
+    tier = substantiated or entries
+    evidence = [c.evidence for c in entries]
+
+    distinct_values = {_stable_key(c.value) for c in tier}
+    if len(distinct_values) > 1:
+        return FieldValue(value=tier[0].value, status="conflicting", evidence=evidence), len(distinct_values)
+
+    if not substantiated:
         return (
             FieldValue(
-                value=entries[0].value,
+                value=tier[0].value,
                 status="needs_review",
                 evidence=evidence,
                 normalization_notes="model's citation could not be verified against source text",
@@ -378,7 +391,7 @@ def _resolve_field_candidates(name: str, entries: list[_Candidate]) -> tuple[Fie
             0,
         )
 
-    value, status, notes = normalize_value(name, entries[0].value)
+    value, status, notes = normalize_value(name, tier[0].value)
     field = FieldValue(value=value, status=status, evidence=evidence, normalization_notes=notes)
     return validate_field_shape(name, field), 0
 

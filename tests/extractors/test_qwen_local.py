@@ -162,6 +162,57 @@ def test_extract_flags_conflicting_values_across_chunks():
     assert any(flag.field == "model_type" for flag in result.review_flags)
 
 
+def test_a_substantiated_candidate_wins_over_a_disagreeing_unsubstantiated_one():
+    # found via a real end-to-end run on the external pptx fixture: a
+    # tentative table-sourced guess on one slide disagreed with an
+    # already-verified key_value citation on another slide, and the old
+    # merge logic treated any value disagreement as a "conflict"
+    # regardless of confidence -- downgrading a correctly-substantiated
+    # answer to `conflicting` and even showing the lower-confidence value
+    # as the field's displayed value. A table-sourced/unverifiable guess
+    # must never be able to outvote a verified citation.
+    responses = iter(
+        [
+            '{"business_use_case": {"value": "Wrong guess", "element_id": "page1.table0"}}',
+            '{"business_use_case": {"value": "Real answer", "element_id": "page2.text0"}}',
+        ]
+    )
+
+    def fake_generate(prompt: str) -> str:
+        if "ONE specific structured field" in prompt:
+            return '{"value": null}'  # second-pass call for some other missing field
+        return next(responses)
+
+    doc = ParsedDocument(
+        document_id="sha256:x",
+        filename="x.pdf",
+        format="pdf",
+        elements=[
+            Element(
+                element_id="page1.table0",
+                type="table",
+                page_or_slide=1,
+                method="m",
+                content={"rows": [["A", "B"], ["Wrong guess", "x"], ["Other guess", "y"]]},
+            ),
+            Element(
+                element_id="page2.text0",
+                type="text",
+                page_or_slide=2,
+                method="m",
+                raw_text="Real answer",
+            ),
+        ],
+    )
+
+    result = qwen_local.extract(doc, generate_fn=fake_generate)
+
+    field = result.fields["business_use_case"]
+    assert field.value == "Real answer"
+    assert field.status == "extracted"
+    assert not any(f.field == "business_use_case" for f in result.review_flags)
+
+
 def test_model_performance_value_is_normalized_and_shape_validated():
     def fake_generate(prompt: str) -> str:
         return '{"model_performance": {"value": "Accuracy 92%", "element_id": "page1.text0"}}'
