@@ -568,7 +568,16 @@ def _build_default_generate_fn(settings: Settings) -> GenerateFn:
             messages, add_generation_prompt=True, return_tensors="pt", return_dict=True
         ).to(device)
         with torch.no_grad():
-            output_ids = model.generate(**inputs, max_new_tokens=1024)
+            # the model's own bundled generation_config.json defaults to
+            # do_sample=True, temperature=0.7 -- with no seed set, that makes
+            # every call non-deterministic and occasionally lets it ramble
+            # close to the token cap instead of a short, direct answer
+            # (found via a real run: the identical pipeline against the
+            # identical cache took 50 minutes once and ~3 minutes another
+            # time). Greedy decoding is both deterministic and fast; a
+            # single most-confident answer is what structured extraction
+            # wants anyway, not sampled diversity.
+            output_ids = model.generate(**inputs, max_new_tokens=1024, do_sample=False)
         prompt_length = inputs["input_ids"].shape[1]
         return tokenizer.decode(output_ids[0][prompt_length:], skip_special_tokens=True)
 

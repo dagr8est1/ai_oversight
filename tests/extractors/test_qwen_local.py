@@ -629,3 +629,53 @@ def test_default_generate_fn_raises_friendly_error_when_llm_extra_missing(monkey
 
     with pytest.raises(qwen_local.ModelNotAvailableError, match="llm"):
         qwen_local.extract(doc)
+
+
+def test_default_generate_fn_uses_greedy_decoding_not_sampling(monkeypatch):
+    # found via a real run: the exact same pipeline against the exact same
+    # cached vision data took 50 minutes once and ~3 minutes on a later,
+    # unrelated replay -- the model's own bundled generation_config.json
+    # sets do_sample=True, temperature=0.7, with no seed set anywhere in
+    # this code, so every call is genuinely stochastic and occasionally
+    # rambles close to the 1024-token generation cap instead of stopping
+    # at a short, direct answer. Greedy decoding makes every run both
+    # deterministic and consistently fast -- sampling diversity isn't
+    # valuable for a single most-confident structured-extraction answer
+    # anyway. Fakes stand in for the real model/tokenizer so this never
+    # triggers a real download or real inference.
+    import torch
+    import transformers
+
+    recorded_kwargs = {}
+
+    class _FakeBatchEncoding(dict):
+        def to(self, device):
+            return self
+
+    class _FakeTokenizer:
+        def apply_chat_template(self, messages, **kwargs):
+            return _FakeBatchEncoding(
+                input_ids=torch.zeros((1, 3), dtype=torch.long),
+                attention_mask=torch.ones((1, 3), dtype=torch.long),
+            )
+
+        def decode(self, ids, skip_special_tokens=True):
+            return "{}"
+
+    class _FakeModel:
+        def to(self, device):
+            return self
+
+        def generate(self, **kwargs):
+            recorded_kwargs.update(kwargs)
+            return torch.zeros((1, 4), dtype=torch.long)
+
+    monkeypatch.setattr(transformers.AutoTokenizer, "from_pretrained", lambda *a, **k: _FakeTokenizer())
+    monkeypatch.setattr(transformers.AutoModelForCausalLM, "from_pretrained", lambda *a, **k: _FakeModel())
+
+    from ai_oversight.config import Settings
+
+    generate_fn = qwen_local._build_default_generate_fn(Settings.from_env())
+    generate_fn("some prompt")
+
+    assert recorded_kwargs.get("do_sample") is False
