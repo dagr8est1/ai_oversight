@@ -13,9 +13,13 @@ RISK_RATING_PATTERN = re.compile(
 )
 
 # A name (letters/spaces/hyphens, no digits) followed by a number and an
-# optional percent sign. Matched with `match` (start-anchored only, no `$`),
-# so trailing prose like " (Oct 2026)" after the number doesn't block it.
-METRIC_SEGMENT_PATTERN = re.compile(r"^([A-Za-z][A-Za-z\s\-]*?)\s+([\d.]+)\s*(%)?")
+# optional percent sign, end-anchored. Parenthetical trailing notes like
+# " (Oct 2026)" are stripped before matching (see normalize_metric_list), so
+# the end anchor is safe to keep -- without it, a segment with no separator
+# before a second metric (e.g. "Precision 0.91 recall 0.86") or trailing
+# prose (e.g. "Recall dropped 0.05 to 0.81") would match only its first
+# number and silently discard or misread the rest.
+METRIC_SEGMENT_PATTERN = re.compile(r"^([A-Za-z][A-Za-z\s\-]*?)\s+([\d.]+)\s*(%)?\s*$")
 
 _PARENTHETICAL = re.compile(r"\([^)]*\)")
 

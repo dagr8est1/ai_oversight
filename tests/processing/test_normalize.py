@@ -80,6 +80,22 @@ def test_normalize_metric_list_does_not_crash_on_a_malformed_number():
     assert notes is not None
 
 
+def test_normalize_metric_list_does_not_silently_drop_a_segment_missing_a_separator():
+    # no ";" or "," between the two metrics -- dropping the end anchor to
+    # tolerate trailing parentheticals also (re)opened the door to silently
+    # keeping only the first metric and discarding the rest with ok=True
+    value, notes, ok = normalize_metric_list("Precision 0.91 recall 0.86")
+    assert ok is False
+    assert value == "Precision 0.91 recall 0.86"
+    assert notes is not None
+
+
+def test_normalize_metric_list_does_not_confidently_mis_segment_trailing_prose():
+    value, _notes, ok = normalize_metric_list("Recall dropped 0.05 to 0.81")
+    assert ok is False
+    assert value == "Recall dropped 0.05 to 0.81"
+
+
 def test_normalize_metric_list_reports_failure_when_nothing_parses():
     value, notes, ok = normalize_metric_list("Not yet measured")
     assert ok is False

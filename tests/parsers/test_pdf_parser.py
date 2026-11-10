@@ -106,6 +106,13 @@ def test_chart_region_on_page_locates_the_gridline_cluster_for_the_chart_page():
         assert region.height < page.rect.height
         assert region.width > 50
         assert region.height > 50
+        # the real gridlines span y=198 to y=382 (6 evenly-spaced axis lines);
+        # a bbox built from zero-height Rects via `|=` silently collapses to
+        # just the first gridline, since PyMuPDF treats a zero-area Rect as
+        # "empty" and a union with an empty Rect is a no-op -- this assertion
+        # catches that regression directly, not just via a width/height floor
+        assert region.y0 <= 198
+        assert region.y1 >= 382
 
 
 def test_chart_region_on_page_is_none_for_decorative_pages():

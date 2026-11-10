@@ -46,6 +46,7 @@ class _Chunk:
 class _Candidate:
     value: Any
     evidence: Evidence
+    substantiated: bool
 
 
 def extract(
@@ -82,8 +83,10 @@ def extract(
                 # for this chunk, rather than not mentioning it at all
                 ambiguous_signaled.add(field_name)
                 continue
-            evidence = _build_evidence(chunk, element_id, raw_response)
-            candidates[field_name].append(_Candidate(value=value, evidence=evidence))
+            evidence, substantiated = _build_evidence(chunk, element_id, raw_response, value)
+            candidates[field_name].append(
+                _Candidate(value=value, evidence=evidence, substantiated=substantiated)
+            )
 
     fields, review_flags = _merge_candidates(candidates, ambiguous_signaled, failed_chunks)
 
@@ -112,22 +115,43 @@ def _unpack_field_entry(entry: Any) -> tuple[Any, str | None]:
     return entry, None
 
 
-def _build_evidence(chunk: _Chunk, cited_element_id: str | None, raw_response: str) -> Evidence:
+def _normalize_for_match(text: str) -> str:
+    return " ".join(str(text).strip().lower().split())
+
+
+def _build_evidence(
+    chunk: _Chunk, cited_element_id: str | None, raw_response: str, value: Any
+) -> tuple[Evidence, bool]:
+    """Returns (evidence, substantiated). `substantiated` is True only when
+    the model cited a real element in this chunk AND (for a string value)
+    that value actually appears in that element's own text -- PLAN.md
+    Section 9 requires every extracted field to point to a specific source
+    element, so neither a made-up citation nor a citation whose value isn't
+    actually there can count as a confident `extracted`.
+    """
     if cited_element_id and cited_element_id in chunk.element_texts:
-        return Evidence(
+        source_text = chunk.element_texts[cited_element_id]
+        evidence = Evidence(
             page_or_slide=chunk.page_or_slide,
             element_id=cited_element_id,
-            quote=chunk.element_texts[cited_element_id],
+            quote=source_text,
             method="qwen_local",
         )
+        substantiated = (
+            not isinstance(value, str) or _normalize_for_match(value) in _normalize_for_match(source_text)
+        )
+        return evidence, substantiated
+
     # the model didn't cite a real element in this chunk -- degrade to a
-    # chunk-level citation rather than rejecting an otherwise-usable value
-    return Evidence(
+    # chunk-level citation rather than rejecting an otherwise-usable value,
+    # but an unverifiable citation can never be "extracted" either
+    evidence = Evidence(
         page_or_slide=chunk.page_or_slide,
         element_id=",".join(chunk.element_texts),
         quote=raw_response,
         method="qwen_local",
     )
+    return evidence, False
 
 
 def _chunk_by_page(doc: ParsedDocument) -> list[_Chunk]:
@@ -192,12 +216,32 @@ def _extract_chunk(chunk: _Chunk, generate_fn: GenerateFn) -> tuple[dict[str, An
     return None, response, False
 
 
+def _is_plausible_response(candidate: Any) -> bool:
+    """A real answer's keys are canonical field names, and each value is
+    either a scalar/null or a {"value": ..., ...} object. This is what
+    stops a truncated outer object from falling back to its own inner
+    {"value": ..., "element_id": ...} fragment -- that fragment decodes
+    fine on its own, but none of its keys are canonical fields, so it must
+    never be accepted as if it were the whole response."""
+    if not isinstance(candidate, dict):
+        return False
+    for key, value in candidate.items():
+        if key not in CANONICAL_FIELDS:
+            return False
+        if isinstance(value, dict) and "value" not in value:
+            return False
+        if not isinstance(value, dict | str | int | float | bool) and value is not None:
+            return False
+    return True
+
+
 def _parse_and_validate(response: str) -> tuple[dict[str, Any] | None, str | None]:
-    """Find the last top-level JSON object the response actually decodes,
-    scanning from each '{' rather than trusting the first-to-last-brace span
-    -- that span breaks on trailing prose containing its own brace, or an
-    echoed example object followed by the real answer. A '{' nested inside
-    the current winning object's span is skipped, so only sibling top-level
+    """Find the last top-level JSON object that both decodes AND looks like
+    a real field-mapping response (see `_is_plausible_response`), scanning
+    from each '{' rather than trusting the first-to-last-brace span -- that
+    span breaks on trailing prose containing its own brace, or an echoed
+    example object followed by the real answer. A '{' nested inside the
+    current winning object's span is skipped, so only sibling top-level
     objects compete (the last one wins, e.g. the real answer after an echoed
     example), never the already-matched object's own inner keys/values."""
     decoder = json.JSONDecoder()
@@ -210,11 +254,11 @@ def _parse_and_validate(response: str) -> tuple[dict[str, Any] | None, str | Non
             candidate, end = decoder.raw_decode(response, index)
         except json.JSONDecodeError:
             continue
-        if isinstance(candidate, dict):
+        if isinstance(candidate, dict) and _is_plausible_response(candidate):
             last_valid = candidate
             last_valid_end = end
     if last_valid is None:
-        return None, "no JSON object found in response"
+        return None, "no JSON object with canonical field keys found in response"
     return last_valid, None
 
 
@@ -242,6 +286,15 @@ def _merge_candidates(
                     field=name,
                     message=f"{len(distinct_values)} differing candidate values found across chunks",
                 )
+            )
+            continue
+
+        if not any(c.substantiated for c in entries):
+            fields[name] = FieldValue(
+                value=entries[0].value,
+                status="needs_review",
+                evidence=evidence,
+                normalization_notes="model's citation could not be verified against source text",
             )
             continue
 

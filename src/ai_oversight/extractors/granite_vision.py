@@ -156,11 +156,14 @@ def apply_to_result(
     """
     try:
         vision_fn = vision_fn or build_default_vision_fn(settings)
-    except VisionModelNotAvailableError as exc:
+        observations = run_vision_pass(document_path, doc, vision_fn)
+    except Exception as exc:  # noqa: BLE001 -- deliberately blind, see comment below
+        # anything here -- missing extra, offline/missing weights, OOM, a
+        # generate error -- must degrade to a warning, never break the
+        # baseline result the text backend already produced successfully.
         result.extraction_warnings.append(f"vision pass requested but unavailable: {exc}")
         return result
 
-    observations = run_vision_pass(document_path, doc, vision_fn)
     vision_metrics: list[MetricObservation] = []
     for observation in observations:
         if observation.status != "ok":

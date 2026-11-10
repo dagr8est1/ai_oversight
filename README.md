@@ -85,15 +85,36 @@ no network access:
   actual run in this session — the `vision` extra and its ~8GB weights were
   deliberately not downloaded. All routing, cropping, and defensive-parsing
   logic is tested via an injected fake vision call instead.
-- PDF chart cropping renders the *whole page*'s gridline-cluster region at
-  2x zoom; it does not yet try multiple crop sizes if the model misreads a
-  cramped legend or axis label.
+- PDF chart cropping renders the gridline-cluster's own bounding box (plus a
+  margin) at 2x zoom, not the whole page; it does not yet try multiple crop
+  sizes if the model misreads a cramped legend or axis label.
 - A PPTX picture shape is always routed to `<tables_json>`, never
   `<chart2csv>` — there's no signal in a bare picture shape to tell which
   task fits, and neither real sample contains one (only the unit tests do).
 - Vision-recovered metrics are cross-checked only against the single
-  already-extracted narrative value for `model_performance`, the same
-  one-field scope as Phase 2's native-chart conflict check.
+  already-extracted narrative value for `model_performance`, not against the
+  chart's own native data labels when present as text (e.g. the PDF page 3's
+  axis values, already captured as plain text in Phase 1) — a source-first
+  three-way check (native labels, narrative, vision) is not yet implemented.
+- A vision-recovered chart's raw response, crop bounding box, and per-row
+  provenance are not retained in `ExtractionResult` — only the derived
+  `MetricObservation`s are. `VisionObservation` exists but isn't surfaced in
+  the output, so a vision run can't be independently audited from the JSON
+  alone yet.
+- `_metrics_from_chart_observation` picks the "latest" chart2csv value by
+  row order, not by parsing and sorting the period column — a model that
+  returns rows out of chronological order would pick the wrong "latest"
+  value for conflict comparison. It also doesn't accept a `%`-suffixed cell
+  or flag an unparseable one.
+- Vision-derived metrics aren't flagged as estimates in their own right
+  (PLAN.md Section 9 asks to treat them as such) — they're only flagged
+  indirectly, via a conflict, if they disagree with the narrative.
+- `normalize_risk_rating`'s inherent/residual capture can still cross a
+  clause boundary on unusual wording (e.g. "Inherent rating TBD; residual
+  rating MEDIUM. Prior residual LOW" misreads which value is inherent vs.
+  residual) — the whitelist fix closed the original bug (capturing a
+  non-rating word) but not this narrower one; neither real sample's wording
+  triggers it.
 
 ## Known limitations (Phase 2 — semantic extraction)
 

@@ -57,7 +57,11 @@ def test_extract_retries_once_on_invalid_json_then_succeeds():
     assert result.fields["submission_id"].status == "extracted"
 
 
-def test_a_cited_element_id_outside_the_chunk_falls_back_gracefully():
+def test_a_cited_element_id_outside_the_chunk_falls_back_to_needs_review():
+    # a made-up element_id means the model's citation can't be verified at
+    # all -- PLAN.md Section 9 requires every extracted field to point to a
+    # specific source element, so this can never be a confident "extracted",
+    # independent of whether the value itself happens to be right
     def fake_generate(prompt: str) -> str:
         return '{"submission_id": {"value": "AI-INT-2026-041", "element_id": "slide99.made_up"}}'
 
@@ -66,7 +70,7 @@ def test_a_cited_element_id_outside_the_chunk_falls_back_gracefully():
 
     field = result.fields["submission_id"]
     assert field.value == "AI-INT-2026-041"
-    assert field.status == "extracted"
+    assert field.status == "needs_review"
     # falls back to a chunk-level citation rather than trusting a made-up id
     assert field.evidence[0].element_id == "page1.text0"
 
@@ -85,6 +89,32 @@ def test_extract_falls_back_to_needs_review_and_keeps_raw_response_as_evidence()
     assert field.evidence[0].method == "qwen_local_unvalidated"
     assert "never produces JSON" in field.evidence[0].quote
     assert any("needs_review" in w for w in result.extraction_warnings)
+
+
+def test_a_value_not_actually_present_in_its_cited_evidence_is_needs_review():
+    # the model cites a real element, but the value it reports isn't
+    # actually in that element's text -- accepting it as "extracted" would
+    # make an unsubstantiated claim look verified
+    def fake_generate(prompt: str) -> str:
+        return '{"submission_id": {"value": "TOTALLY-MADE-UP", "element_id": "page1.text0"}}'
+
+    doc = _doc_with_one_page("01 / Submission ID: AI-INT-2026-041", element_id="page1.text0")
+    result = qwen_local.extract(doc, generate_fn=fake_generate)
+
+    field = result.fields["submission_id"]
+    assert field.status == "needs_review"
+    assert field.value == "TOTALLY-MADE-UP"
+    assert field.evidence[0].element_id == "page1.text0"
+
+
+def test_a_value_actually_present_in_its_cited_evidence_is_extracted():
+    def fake_generate(prompt: str) -> str:
+        return '{"submission_id": {"value": "AI-INT-2026-041", "element_id": "page1.text0"}}'
+
+    doc = _doc_with_one_page("01 / Submission ID: AI-INT-2026-041", element_id="page1.text0")
+    result = qwen_local.extract(doc, generate_fn=fake_generate)
+
+    assert result.fields["submission_id"].status == "extracted"
 
 
 def test_an_explicit_null_value_is_ambiguous_not_missing():
@@ -169,6 +199,25 @@ def test_metrics_incidents_and_document_type_come_from_the_ir_not_the_model():
     assert result.document_type == "external"
     assert len(result.metrics) == 1
     assert len(result.incidents) == 1
+
+
+def test_a_truncated_outer_object_does_not_fall_back_to_its_own_inner_object():
+    # a response cut off mid-stream (plausible at a fixed max_new_tokens) is
+    # invalid JSON overall; the scanner must not then accept the nested
+    # {"value": ..., "element_id": ...} fragment as if IT were the whole
+    # answer -- none of its keys are canonical fields, so silently treating
+    # it as "ok" would report every field "missing" with no warning at all.
+    def fake_generate(prompt: str) -> str:
+        return (
+            '{"submission_id": {"value": "AI-1", "element_id": "page1.text0"}, '
+            '"risk_rating": {"value": "Inherent HIGH residual MEDIUM", "element_id": "page1.text0"},'
+        )
+
+    doc = _doc_with_one_page("01 / Submission ID\nAI-1")
+    result = qwen_local.extract(doc, generate_fn=fake_generate)
+
+    assert result.fields["submission_id"].status == "needs_review"
+    assert any("needs_review" in w for w in result.extraction_warnings)
 
 
 def test_an_echoed_example_object_is_not_mistaken_for_the_real_answer():

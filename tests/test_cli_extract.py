@@ -53,6 +53,18 @@ def test_extract_qwen_local_without_llm_extra_gives_a_friendly_error(tmp_path):
     assert "Traceback" not in result.output
 
 
+def test_extract_honors_ai_oversight_vision_enabled_env_var(tmp_path, monkeypatch):
+    monkeypatch.setenv("AI_OVERSIGHT_VISION_ENABLED", "true")
+    out = tmp_path / "internal.json"
+
+    # no --vision flag at all -- the env var alone should turn it on
+    result = runner.invoke(app, ["extract", str(SAMPLE_PDF), "--out", str(out)])
+
+    assert result.exit_code == 0, result.stdout
+    data = json.loads(out.read_text())
+    assert any("vision" in w.lower() for w in data["extraction_warnings"])
+
+
 def test_extract_vision_without_vision_extra_degrades_to_a_warning_not_a_crash(tmp_path):
     # no vision model installed in this environment -- --vision must still
     # produce a usable (if vision-less) result, per PLAN.md Phase 3's

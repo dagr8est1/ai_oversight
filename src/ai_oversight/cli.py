@@ -3,6 +3,7 @@ from pathlib import Path
 import typer
 
 import ai_oversight
+from ai_oversight.config import Settings
 from ai_oversight.extractors import granite_vision, qwen_local, rules
 from ai_oversight.parsers import pdf_parser, pptx_parser
 from ai_oversight.reporting import json_writer, markdown_writer
@@ -75,11 +76,17 @@ def extract(
     document: Path = typer.Argument(..., exists=True, help="PDF or PPTX report to extract from."),
     backend: str = typer.Option("rules", "--backend", help="rules (default, no model) or qwen_local."),
     vision: bool = typer.Option(
-        False, "--vision", help="Also recover chart/table data Phase 1 could only flag, via Granite Vision."
+        None,  # sentinel: resolved to AI_OVERSIGHT_VISION_ENABLED below if --vision isn't passed
+        "--vision",
+        help="Also recover chart/table data Phase 1 could only flag, via Granite Vision. "
+        "Defaults to the AI_OVERSIGHT_VISION_ENABLED env var.",
     ),
     out: Path = typer.Option(..., "--out", help="Where to write the extraction result JSON."),
 ) -> None:
     """Extract the 22 canonical fields, writing <out> and a <out>.review.md summary."""
+    if vision is None:
+        vision = Settings.from_env().vision_enabled
+
     backend_fn = _BACKENDS.get(backend)
     if backend_fn is None:
         supported = ", ".join(sorted(_BACKENDS))

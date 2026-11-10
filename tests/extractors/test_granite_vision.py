@@ -109,6 +109,29 @@ def test_apply_to_result_adds_vision_metrics_and_flags_a_conflict(tmp_path):
     assert any(flag.field == "model_performance" for flag in updated.review_flags)
 
 
+def test_apply_to_result_degrades_to_a_warning_on_any_model_failure_not_just_missing_extra():
+    # once the extra IS installed, loading or running the real model can
+    # still fail for other reasons (offline, missing weights, OOM) --
+    # apply_to_result must never let that escape as a crash either
+    from ai_oversight.schemas import ExtractionResult
+
+    def broken_vision_fn(image_bytes: bytes, task: str) -> str:
+        raise RuntimeError("out of memory")
+
+    doc = ParsedDocument(document_id="sha256:x", filename=SAMPLE_PDF.name, format="pdf", elements=[])
+    result = ExtractionResult(
+        document_id="sha256:x",
+        source_file=SAMPLE_PDF.name,
+        extracted_at="2026-01-01T00:00:00Z",
+        fields={},
+    )
+
+    updated = granite_vision.apply_to_result(SAMPLE_PDF, doc, result, vision_fn=broken_vision_fn)
+
+    assert updated.metrics == []
+    assert any("vision" in w.lower() for w in updated.extraction_warnings)
+
+
 def test_apply_to_result_adds_a_warning_instead_of_crashing_when_model_unavailable():
     from ai_oversight.schemas import ExtractionResult
 

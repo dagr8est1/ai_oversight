@@ -193,9 +193,17 @@ def chart_region_on_page(page) -> "pymupdf.Rect | None":
     if len(gridlines) < MIN_GRIDLINES_FOR_CHART:
         return None
 
-    region = gridlines[0]["rect"]
-    for drawing in gridlines[1:]:
-        region |= drawing["rect"]
+    # Each gridline is a zero-height stroke, which PyMuPDF treats as an
+    # "empty" Rect -- Rect.__or__ with an empty operand is a no-op, so
+    # folding with `|=` silently collapses to just the first gridline
+    # instead of expanding. Union explicitly over the corners instead.
+    rects = [drawing["rect"] for drawing in gridlines]
+    region = pymupdf.Rect(
+        min(r.x0 for r in rects),
+        min(r.y0 for r in rects),
+        max(r.x1 for r in rects),
+        max(r.y1 for r in rects),
+    )
 
     margin = CHART_REGION_MARGIN
     expanded = pymupdf.Rect(
