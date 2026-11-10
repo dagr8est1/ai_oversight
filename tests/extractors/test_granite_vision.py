@@ -84,6 +84,38 @@ def test_extract_table_flags_malformed_json_as_needs_review():
     assert obs.parsed is None
 
 
+def test_extract_table_recovers_complete_rows_from_a_response_truncated_mid_object():
+    # found via a real end-to-end run: the model emitted a stop token mid-
+    # generation while writing a 16-row table's JSON, discarding all 15
+    # fully-formed rows that came before the cutoff along with the one
+    # incomplete row. Reproduces the real shape: a list containing one
+    # table dict whose "cells" array is cut off partway through an object.
+    truncated = (
+        '[{"dimensions": {"rows": 0, "columns": 2}, "cells": ['
+        '{"row": 1, "col": 1, "type": "header", "content": "MODEL INVENTORY ID"}, '
+        '{"row": 1, "col": 2, "type": "data", "content": "INT-SET-042"}, '
+        '{"row": 2, "col": 1, "type": "header", "content": "APPLICATION"}, '
+        '{"row": 2, "col": 2, "type": "data", "content": "Settlement Failure Early Warning"}, '
+        '{"row": 3, "col": 1, "type": "header", "content": "VALIDATION OUTCOME"'
+        # cut off mid-object: no closing brace for this cell, no closing
+        # brackets for "cells" or the outer object/array at all
+    )
+
+    def fake_vision(image_bytes: bytes, task: str) -> str:
+        return truncated
+
+    obs = granite_vision.extract_table(b"x", fake_vision, source_element_id="e", page_or_slide=1)
+
+    assert obs.status == "ok"
+    assert obs.note is not None
+    assert "truncat" in obs.note.lower()
+    cells = obs.parsed[0]["cells"]
+    assert {"row": 1, "col": 2, "type": "data", "content": "INT-SET-042"} in cells
+    assert {"row": 2, "col": 2, "type": "data", "content": "Settlement Failure Early Warning"} in cells
+    # the incomplete row-3 cell is correctly dropped, not fabricated
+    assert all(c.get("row") != 3 for c in cells)
+
+
 def test_default_vision_fn_raises_friendly_error_when_vision_extra_missing(monkeypatch):
     # simulate absence via sys.modules rather than relying on the real
     # environment not having mlx_vlm/transformers installed -- this test

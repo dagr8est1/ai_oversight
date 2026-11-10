@@ -81,10 +81,61 @@ def _parse_table_json(raw: str) -> tuple[list | dict | None, str | None]:
     try:
         parsed = json.loads(text)
     except json.JSONDecodeError as exc:
-        return None, f"JSON parse error: {exc}"
+        repaired = _repair_truncated_json(text)
+        if repaired is None:
+            return None, f"JSON parse error: {exc}"
+        return repaired, (
+            f"response was truncated mid-generation (original error: {exc}); "
+            "recovered the complete rows before the cutoff, dropped the incomplete one"
+        )
     if not isinstance(parsed, list | dict) or not parsed:
         return None, "model output was valid JSON but not a non-empty table"
     return parsed, None
+
+
+def _repair_truncated_json(text: str) -> list | dict | None:
+    """A response cut off by a premature stop token (not a token-budget
+    issue -- confirmed by a real run reproducing byte-for-byte identical
+    output after raising max_tokens) leaves early rows fully formed and
+    only the last one incomplete. Finds the longest prefix of `text` that,
+    closed with the brackets still open at that point, is itself valid
+    JSON -- i.e. the state right after the last complete array element --
+    so those real rows are recovered instead of discarding the lot because
+    one trailing row never finished.
+    """
+    stack: list[str] = []
+    in_string = False
+    escape = False
+    cut_points: list[tuple[int, list[str]]] = []
+
+    for index, char in enumerate(text):
+        if in_string:
+            if escape:
+                escape = False
+            elif char == "\\":
+                escape = True
+            elif char == '"':
+                in_string = False
+            continue
+        if char == '"':
+            in_string = True
+        elif char in "{[":
+            stack.append(char)
+        elif char in "}]":
+            if stack:
+                stack.pop()
+            cut_points.append((index, list(stack)))
+
+    for index, remaining in reversed(cut_points):
+        candidate = text[: index + 1].rstrip().rstrip(",")
+        candidate += "".join("]" if opener == "[" else "}" for opener in reversed(remaining))
+        try:
+            parsed = json.loads(candidate)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(parsed, list | dict) and parsed:
+            return parsed
+    return None
 
 
 def run_vision_pass(document_path: Path, doc: ParsedDocument, vision_fn: VisionFn) -> list[VisionObservation]:
