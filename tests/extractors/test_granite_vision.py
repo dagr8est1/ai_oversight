@@ -393,6 +393,62 @@ def test_run_vision_pass_targets_a_fully_scanned_pdf_page_with_no_chart(tmp_path
     assert observations[0].parsed == [{"Field": "Submission ID", "Value": "AI-1"}]
 
 
+def test_run_vision_pass_splits_a_scanned_page_after_a_truncated_whole_page_response(tmp_path):
+    # the whole-page response is missing the second row's closing brace and
+    # the outer closing bracket -- the exact shape _repair_truncated_json
+    # recovers by keeping only the first (complete) row and dropping the
+    # second, which is the "partial" condition that should trigger a split
+    # retry into top/bottom halves instead of accepting the dropped row
+    pdf_path = _make_scanned_pdf(tmp_path)
+    calls = []
+
+    def fake_vision(image_bytes: bytes, task: str) -> str:
+        calls.append(task)
+        if len(calls) == 1:
+            return '[{"Field": "A", "Value": "1"}, {"Field": "B", "Value": "2"'
+        if len(calls) == 2:
+            return '[{"Field": "A", "Value": "1"}]'
+        return '[{"Field": "B", "Value": "2"}]'
+
+    parsed_doc = ParsedDocument(document_id="sha256:x", filename="scanned.pdf", format="pdf", elements=[])
+
+    observations = granite_vision.run_vision_pass(pdf_path, parsed_doc, fake_vision)
+
+    assert len(calls) == 3  # one whole-page attempt, then two half-page retries
+    assert len(observations) == 2
+    assert all(obs.status == "ok" and obs.note is None for obs in observations)
+    assert {obs.source_element_id for obs in observations} == {
+        "page1.vision_scan.top",
+        "page1.vision_scan.bottom",
+    }
+
+
+def test_run_vision_pass_accepts_a_still_lossy_half_without_recursing_further(tmp_path):
+    # the top half is deliberately still truncated after the first retry --
+    # this is a single-level retry, not recursive splitting, so the lossy
+    # half's loss should surface as-is rather than triggering a third call
+    pdf_path = _make_scanned_pdf(tmp_path)
+    calls = []
+
+    def fake_vision(image_bytes: bytes, task: str) -> str:
+        calls.append(task)
+        if len(calls) == 1:
+            return '[{"Field": "A", "Value": "1"}, {"Field": "B", "Value": "2"'
+        if len(calls) == 2:
+            return '[{"Field": "A", "Value": "1"}, {"Field": "C", "Value": "3"'
+        return '[{"Field": "B", "Value": "2"}]'
+
+    parsed_doc = ParsedDocument(document_id="sha256:x", filename="scanned.pdf", format="pdf", elements=[])
+
+    observations = granite_vision.run_vision_pass(pdf_path, parsed_doc, fake_vision)
+
+    assert len(calls) == 3  # no further recursive splitting attempted
+    by_id = {obs.source_element_id: obs for obs in observations}
+    assert by_id["page1.vision_scan.top"].note is not None
+    assert by_id["page1.vision_scan.bottom"].status == "ok"
+    assert by_id["page1.vision_scan.bottom"].note is None
+
+
 def test_run_vision_pass_does_not_double_route_a_page_that_has_both_a_chart_and_an_image():
     # a page with a detected vector chart is routed via chart2csv already;
     # it must not ALSO be routed again as a "scanned page" just because it

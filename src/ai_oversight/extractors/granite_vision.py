@@ -179,16 +179,54 @@ def _run_pdf_vision(document_path: Path, vision_fn: VisionFn) -> list[VisionObse
             # from table from a bare image, so <tables_json> is the default,
             # same choice already made for a PPTX picture shape)
             if not page.get_text("text").strip() and page.get_images():
-                pixmap = page.get_pixmap(matrix=pymupdf.Matrix(2, 2))
-                observations.append(
-                    extract_table(
-                        pixmap.tobytes("png"),
-                        vision_fn,
-                        source_element_id=f"page{page_number}.vision_scan",
-                        page_or_slide=page_number,
-                    )
-                )
+                observations.extend(_extract_scanned_page_with_split_retry(page, vision_fn, page_number))
     return observations
+
+
+def _extract_scanned_page_with_split_retry(
+    page, vision_fn: VisionFn, page_number: int
+) -> list[VisionObservation]:
+    """A dense scanned page's table can be large enough that Granite emits
+    a premature stop token before finishing the JSON -- confirmed not a
+    token-budget issue (see _repair_truncated_json's own docstring), so
+    simply retrying the identical whole-page call would reproduce the same
+    truncated output (generation here is deterministic, no temperature/
+    sampling configured). Splitting the page into top/bottom halves and
+    querying each separately instead gives each call roughly half the
+    content to output, which is the actual lever available to reduce how
+    often the model stops early.
+
+    Single-level retry only, not recursive: a half that's still lossy after
+    the split is accepted and reported as-is via vision_integrity, rather
+    than splitting further.
+    """
+    import pymupdf
+
+    whole_pixmap = page.get_pixmap(matrix=pymupdf.Matrix(2, 2))
+    whole = extract_table(
+        whole_pixmap.tobytes("png"),
+        vision_fn,
+        source_element_id=f"page{page_number}.vision_scan",
+        page_or_slide=page_number,
+    )
+    if whole.status == "ok" and whole.note is None:
+        return [whole]
+
+    full_rect = page.rect
+    mid_y = (full_rect.y0 + full_rect.y1) / 2
+    halves = [
+        ("top", pymupdf.Rect(full_rect.x0, full_rect.y0, full_rect.x1, mid_y)),
+        ("bottom", pymupdf.Rect(full_rect.x0, mid_y, full_rect.x1, full_rect.y1)),
+    ]
+    return [
+        extract_table(
+            page.get_pixmap(clip=rect, matrix=pymupdf.Matrix(2, 2)).tobytes("png"),
+            vision_fn,
+            source_element_id=f"page{page_number}.vision_scan.{label}",
+            page_or_slide=page_number,
+        )
+        for label, rect in halves
+    ]
 
 
 def _run_pptx_vision(document_path: Path, vision_fn: VisionFn) -> list[VisionObservation]:

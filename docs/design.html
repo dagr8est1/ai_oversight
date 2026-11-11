@@ -472,6 +472,17 @@
     specific loss note for every non-clean task.
   </p>
   <p>
+    For a scanned PDF page specifically, a truncated <code>tables_json</code> response is not simply retried —
+    generation here is deterministic (no temperature/sampling configured), and a real run confirmed retrying
+    the identical whole-page call reproduces the identical truncated output. Instead, a lossy whole-page result
+    triggers one retry: the page is split into top/bottom halves and each is queried separately, giving each
+    call roughly half the content to output — the actual lever available to reduce how often the model stops
+    early. This is a single-level retry, not recursive; a half that's still lossy after the split is accepted
+    and reported as-is. Verified against the real model on the document that originally motivated this: a run
+    that came back <code>review</code> (3/4 tasks clean, one truncated) now comes back <code>pass</code> (5/5
+    clean, the one lossy task replaced by its two clean halves), with the same 11/22 fields extracted either way.
+  </p>
+  <p>
     Because this stage is slow (a real local vision model, also free of any API or token cost to run), its output can be cached once with the
     <code>vision</code> CLI command and replayed via <code>extract --vision-cache</code> — Stage 3 can then be
     iterated on repeatedly without re-running Granite.
@@ -688,7 +699,7 @@ confidence = floor + (ceiling - floor) * corroboration</div>
         <tr><td class="mono">Mini_Vision_Test_External_AI_Usage.pptx</td><td><span class="pill extracted">PASS</span></td><td class="mono">0.45 (10/22)</td><td class="mono">0.91 (10/11)</td></tr>
         <tr><td class="mono">Sample_Internal_AI_Oversight_Report.pdf</td><td><span class="pill missing">N/A</span></td><td class="mono">1.00 (22/22)</td><td class="mono">1.00 (22/22)</td></tr>
         <tr><td class="mono">Sample_External_AI_Usage_Disclosure.pptx</td><td><span class="pill missing">N/A</span></td><td class="mono">1.00 (22/22)</td><td class="mono">1.00 (22/22)</td></tr>
-        <tr><td class="mono">Vision_Required_Internal_AI_Risk_Report.pdf</td><td><span class="pill needs-review">REVIEW</span></td><td class="mono">0.50 (11/22)</td><td class="mono">0.69 (11/16)</td></tr>
+        <tr><td class="mono">Vision_Required_Internal_AI_Risk_Report.pdf</td><td><span class="pill extracted">PASS</span></td><td class="mono">0.50 (11/22)</td><td class="mono">0.69 (11/16)</td></tr>
         <tr><td class="mono">Vision_Required_External_AI_Usage_Disclosure.pptx</td><td><span class="pill extracted">PASS</span></td><td class="mono">0.55 (12/22)</td><td class="mono">0.71 (12/17)</td></tr>
       </tbody>
     </table>
