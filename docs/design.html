@@ -681,12 +681,16 @@ confidence = floor + (ceiling - floor) * corroboration</div>
   <h3>File-level summary</h3>
   <p style="font-size:0.9rem">
     <strong>Field match (22 fields)</strong> is this pipeline's own <code>field_match_rate</code>: the fraction
-    of all 22 canonical fields resolved as a confident <code>extracted</code> match. <strong>Field match (excl.
-    not-mentioned)</strong> narrows the denominator to only the fields the ground-truth check confirms are
-    genuinely present in that source document (<span class="pill extracted">Yes</span> or
-    <span class="pill needs-review">Partial</span>) — a field ground truth says is truly absent
+    of all 22 canonical fields that resolved to <em>any</em> non-null value — a <span class="pill needs-review">needs_review</span>,
+    <span class="pill ambiguous">ambiguous</span>, or <span class="pill conflicting">conflicting</span> field
+    still counts as matched here as long as it carries a real value for a reviewer to look at; only a field
+    with no value at all (<span class="pill missing">missing</span>, or a status that settled on nothing, e.g.
+    an <code>ambiguous</code> field too unresolved to produce even a tentative value) counts as unmatched.
+    <strong>Field match (excl. not-mentioned)</strong> narrows the denominator to only the fields the
+    ground-truth check confirms are genuinely present in that source document (<span class="pill extracted">Yes</span>
+    or <span class="pill needs-review">Partial</span>) — a field ground truth says is truly absent
     (<span class="pill missing">Not stated</span>) and the pipeline correctly reports <code>missing</code> is a
-    correct outcome, but counting it in a "how much did we successfully extract" denominator would understate
+    correct outcome, but counting it in a "how much did we successfully match" denominator would understate
     the rate for documents that simply state fewer of the 22 facts. <strong>Granite parsing</strong> is this
     run's <code>vision_integrity</code> rating (see Stage 2 above); <span class="pill missing">N/A</span> means
     the file has a native text layer and Granite Vision never ran.
@@ -695,12 +699,12 @@ confidence = floor + (ceiling - floor) * corroboration</div>
     <table>
       <thead><tr><th>File</th><th>Granite parsing</th><th>Field match (22 fields)</th><th>Field match (excl. not-mentioned)</th></tr></thead>
       <tbody>
-        <tr><td class="mono">Mini_Vision_Test_Internal_AI_Risk.pdf</td><td><span class="pill extracted">PASS</span></td><td class="mono">0.50 (11/22)</td><td class="mono">0.92 (11/12)</td></tr>
-        <tr><td class="mono">Mini_Vision_Test_External_AI_Usage.pptx</td><td><span class="pill extracted">PASS</span></td><td class="mono">0.45 (10/22)</td><td class="mono">0.91 (10/11)</td></tr>
+        <tr><td class="mono">Mini_Vision_Test_Internal_AI_Risk.pdf</td><td><span class="pill extracted">PASS</span></td><td class="mono">0.59 (13/22)</td><td class="mono">1.00 (12/12)</td></tr>
+        <tr><td class="mono">Mini_Vision_Test_External_AI_Usage.pptx</td><td><span class="pill extracted">PASS</span></td><td class="mono">0.50 (11/22)</td><td class="mono">1.00 (11/11)</td></tr>
         <tr><td class="mono">Sample_Internal_AI_Oversight_Report.pdf</td><td><span class="pill missing">N/A</span></td><td class="mono">1.00 (22/22)</td><td class="mono">1.00 (22/22)</td></tr>
         <tr><td class="mono">Sample_External_AI_Usage_Disclosure.pptx</td><td><span class="pill missing">N/A</span></td><td class="mono">1.00 (22/22)</td><td class="mono">1.00 (22/22)</td></tr>
-        <tr><td class="mono">Vision_Required_Internal_AI_Risk_Report.pdf</td><td><span class="pill extracted">PASS</span></td><td class="mono">0.50 (11/22)</td><td class="mono">0.69 (11/16)</td></tr>
-        <tr><td class="mono">Vision_Required_External_AI_Usage_Disclosure.pptx</td><td><span class="pill extracted">PASS</span></td><td class="mono">0.55 (12/22)</td><td class="mono">0.71 (12/17)</td></tr>
+        <tr><td class="mono">Vision_Required_Internal_AI_Risk_Report.pdf</td><td><span class="pill extracted">PASS</span></td><td class="mono">0.73 (16/22)</td><td class="mono">0.94 (15/16)</td></tr>
+        <tr><td class="mono">Vision_Required_External_AI_Usage_Disclosure.pptx</td><td><span class="pill extracted">PASS</span></td><td class="mono">0.77 (17/22)</td><td class="mono">0.94 (16/17)</td></tr>
       </tbody>
     </table>
   </div>

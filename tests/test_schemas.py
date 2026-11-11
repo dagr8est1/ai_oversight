@@ -217,9 +217,13 @@ def test_vision_integrity_is_computed_not_settable_and_serializes():
 
 
 def _result_with_statuses(statuses: list[str]) -> ExtractionResult:
-    # CANONICAL_FIELDS has 22 entries; pad/trim statuses to match 1:1
+    # CANONICAL_FIELDS has 22 entries; pad/trim statuses to match 1:1. A
+    # non-missing status gets a placeholder value -- field_match_rate keys
+    # on whether a value is present, and a real `missing` field never has
+    # one by construction.
     fields = {
-        name: FieldValue(status=status) for name, status in zip(CANONICAL_FIELDS, statuses, strict=True)
+        name: FieldValue(status=status, value=None if status == "missing" else "x")
+        for name, status in zip(CANONICAL_FIELDS, statuses, strict=True)
     }
     return ExtractionResult(
         document_id="sha256:abc",
@@ -240,12 +244,28 @@ def test_field_match_rate_is_one_when_every_field_was_extracted():
     assert result.field_match_rate == 1.0
 
 
-def test_field_match_rate_only_counts_extracted_status_not_other_non_missing_statuses():
-    # needs_review/ambiguous/conflicting all mean "not a confident match yet"
-    # -- same as missing for this rate, even though they aren't literally absent
+def test_field_match_rate_counts_any_status_with_a_resolved_value_not_only_extracted():
+    # needs_review/ambiguous/conflicting still carry a real value for a
+    # human to look at -- "matched" means something was found, not that
+    # it's already a confident extracted match
     statuses = ["extracted"] * 11 + ["needs_review", "ambiguous", "conflicting"] + ["missing"] * 8
     result = _result_with_statuses(statuses)
-    assert result.field_match_rate == round(11 / 22, 2)
+    assert result.field_match_rate == round(14 / 22, 2)
+
+
+def test_field_match_rate_excludes_a_non_missing_status_with_no_resolved_value():
+    # e.g. an `ambiguous` field that couldn't settle on any one value at
+    # all -- same as missing for this rate, since there's nothing to show
+    fields = {name: FieldValue(status="missing") for name in CANONICAL_FIELDS}
+    fields["incident_history"] = FieldValue(status="ambiguous", value=None)
+    result = ExtractionResult(
+        document_id="sha256:abc",
+        source_file="x.pdf",
+        document_type="internal",
+        extracted_at="2026-01-01T00:00:00Z",
+        fields=fields,
+    )
+    assert result.field_match_rate == 0.0
 
 
 def test_field_match_rate_is_computed_not_settable_and_serializes():
