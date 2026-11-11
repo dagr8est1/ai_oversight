@@ -114,6 +114,26 @@ uv run python -m ai_oversight vision data/samples/Vision_Required_Internal_AI_Ri
 uv run python -m ai_oversight extract data/samples/Vision_Required_Internal_AI_Risk_Report.pdf --backend qwen_local --vision-cache outputs/internal.vision_observations.json --out outputs/internal.vision_qwen.json
 ```
 
+Run the pipeline over several documents at once with `batch`, combined into
+one report: one row per (file, field), with that field's status, value, and
+confidence. Written as CSV, or as a styled HTML report when `--out` ends in
+`.html` — no extra flag needed. A file that fails to parse or extract is
+reported and skipped rather than aborting the whole batch:
+
+```bash
+uv run python -m ai_oversight batch data/samples/Sample_Internal_AI_Oversight_Report.pdf data/samples/Sample_External_AI_Usage_Disclosure.pptx --backend qwen_local --vision --out outputs/report.html
+```
+
+Every row also carries that document's `field_match_rate` — the fraction of
+the 22 canonical fields that resolved to *any* non-null value, not only a
+confident `extracted` match (a `needs_review`/`ambiguous`/`conflicting` field
+with a real value still counts as matched; only a field with no value at all
+counts as unmatched). With `--vision`, every row also carries that document's
+`vision_integrity` rating (`pass`/`review`/`fail`), a success rate, and any
+Granite Vision data-loss notes — surfaced as `field_match_rate`/`vision_rating`/`vision_success_rate`/`vision_data_loss`
+CSV columns, or as a field-match-rate line plus a pass/review/fail callout
+under each file's heading in the HTML report.
+
 ## Configuration
 
 All settings are environment variables; defaults require no credentials and
@@ -134,6 +154,15 @@ no network access:
   from both a fully-scanned PDF and a PPTX with picture-only slides. The
   `qwen_local` + `--vision` combination was also verified end-to-end this
   way, mapping recovered labels like "APPLICATION ID" to `submission_id`.
+- A scanned PDF page's `tables_json` response can be long enough that
+  Granite stops generating before finishing the JSON — confirmed not a
+  token-budget issue (raising the output-token cap reproduced identical
+  truncated output), and generation here is deterministic, so retrying the
+  identical call changes nothing. A lossy whole-page result now triggers one
+  retry, splitting the page into top/bottom halves and querying each
+  separately. This is single-level only, not recursive: a half that's still
+  lossy after the split is accepted and reported as-is via
+  `vision_integrity` rather than being split further.
 - `--vision` without `--backend qwen_local` recovers content into
   `vision_observations` and (for chart2csv) `metrics`, but `rules` has no
   way to map an arbitrarily-worded recovered label to a canonical field
