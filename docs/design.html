@@ -622,10 +622,11 @@ confidence = floor + (ceiling - floor) * corroboration</div>
   <h2>Testing with Ground-truth Check</h2>
   <p>
     Every file in this section is a <strong>simulated</strong> PDF or PPTX report — synthetic, fictional
-    test documents built to exercise this pipeline, not real filings from any organization. Each one is run
-    through the real pipeline via <code>batch</code> (live Granite Vision + <code>qwen_local</code>), and every
-    resulting row is then checked by hand against that document's actual content: does this field's
-    information really appear in the source, or not?
+    test documents built to exercise this pipeline, not real filings from any organization. In total,
+    <strong>6 simulated documents</strong> are tested: two minimal single-page/slide vision-only fixtures, and
+    four larger, more realistic reports. Each one is run through the real pipeline via <code>batch</code> (live
+    Granite Vision + <code>qwen_local</code>), and every resulting row is then checked by hand against that
+    document's actual content: does this field's information really appear in the source, or not?
   </p>
   <p>
     Two deliberately minimal files start this off — <code>Mini_Vision_Test_Internal_AI_Risk.pdf</code> (1
