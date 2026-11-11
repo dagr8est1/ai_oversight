@@ -132,3 +132,20 @@ def test_render_shows_field_match_rate_even_when_vision_was_not_used():
     html = render([_result("a.pdf")])
     assert "field-match-rate" in html
     assert "0.0" in html
+
+
+def test_field_match_rate_breakdown_count_agrees_with_the_rate_shown_next_to_it():
+    # a needs_review field with a real value counts toward field_match_rate
+    # (any non-null value, not only a confident `extracted` match) -- the
+    # breakdown count displayed right next to the rate must count the same
+    # way, or the two numbers shown side by side would disagree
+    result = _result(
+        "a.pdf",
+        submission_id=FieldValue(value="AI-1", status="extracted"),
+        reporting_entity=FieldValue(value="Needs a second look", status="needs_review"),
+    )
+
+    html = render([result])
+
+    assert str(round(2 / 22, 2)) in html
+    assert "2/22 fields matched" in html

@@ -47,11 +47,11 @@ def _vision_integrity_block(result: ExtractionResult) -> str:
 
 def _field_match_rate_block(result: ExtractionResult) -> str:
     rate = result.field_match_rate
-    extracted = sum(1 for field in result.fields.values() if field.status == "extracted")
+    matched = sum(1 for field in result.fields.values() if field.value is not None)
     total = len(result.fields)
     return (
         f'<div class="field-match-rate">'
-        f"<strong>Field match rate:</strong> {_escape(rate)} ({extracted}/{total} fields extracted)"
+        f"<strong>Field match rate:</strong> {_escape(rate)} ({matched}/{total} fields matched)"
         f"</div>"
     )
 
