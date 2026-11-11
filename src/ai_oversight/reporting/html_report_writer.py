@@ -20,6 +20,7 @@ th { background: #f4f4f4; font-size: 0.75rem; text-transform: uppercase; letter-
 .vision-pass { background: #dafbe1; color: #1a7f37; }
 .vision-review { background: #fff8c5; color: #9a6700; }
 .vision-fail { background: #ffebe9; color: #cf222e; }
+.field-match-rate { margin: 0.4rem 0; font-size: 0.85rem; color: #57606a; }
 """
 
 
@@ -44,10 +45,22 @@ def _vision_integrity_block(result: ExtractionResult) -> str:
     return "".join(parts)
 
 
+def _field_match_rate_block(result: ExtractionResult) -> str:
+    rate = result.field_match_rate
+    extracted = sum(1 for field in result.fields.values() if field.status == "extracted")
+    total = len(result.fields)
+    return (
+        f'<div class="field-match-rate">'
+        f"<strong>Field match rate:</strong> {_escape(rate)} ({extracted}/{total} fields extracted)"
+        f"</div>"
+    )
+
+
 def render(results: list[ExtractionResult]) -> str:
     body_parts = ["<h1>Extraction Report</h1>"]
     for result in results:
         body_parts.append(f"<h2>{_escape(result.source_file)}</h2>")
+        body_parts.append(_field_match_rate_block(result))
         body_parts.append(_vision_integrity_block(result))
         body_parts.append("<table>")
         body_parts.append("<tr><th>Field</th><th>Status</th><th>Value</th><th>Confidence</th></tr>")

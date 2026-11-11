@@ -227,3 +227,18 @@ class ExtractionResult(BaseModel):
             rating=rating,
             loss_notes=loss_notes,
         )
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def field_match_rate(self) -> float:
+        """Fraction of the 22 canonical fields resolved as a confident
+        `extracted` match for this document. `needs_review`, `ambiguous`,
+        and `conflicting` all count the same as `missing` here -- each
+        means a human still has to confirm the value, same as if nothing
+        were found at all. Derived purely from `fields`, never a stored
+        field, so it can't drift out of sync as statuses change.
+        """
+        if not self.fields:
+            return 0.0
+        extracted = sum(1 for field in self.fields.values() if field.status == "extracted")
+        return round(extracted / len(self.fields), 2)

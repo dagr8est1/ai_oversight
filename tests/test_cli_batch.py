@@ -10,7 +10,10 @@ SAMPLES = Path(__file__).parent.parent / "data" / "samples"
 SAMPLE_PDF = SAMPLES / "Sample_Internal_AI_Oversight_Report.pdf"
 SAMPLE_PPTX = SAMPLES / "Sample_External_AI_Usage_Disclosure.pptx"
 
-_HEADER = "file_name,field,status,value,confidence,vision_rating,vision_success_rate,vision_data_loss"
+_HEADER = (
+    "file_name,field,status,value,confidence,field_match_rate,"
+    "vision_rating,vision_success_rate,vision_data_loss"
+)
 
 
 def test_batch_writes_one_combined_csv_row_per_field_per_file(tmp_path):

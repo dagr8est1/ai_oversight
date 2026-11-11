@@ -113,3 +113,22 @@ def test_render_shows_fail_rating_and_loss_notes_when_a_vision_task_recovered_no
     assert "vision-fail" in html
     assert "FAIL" in html
     assert "JSON parse error: boom" in html
+
+
+def test_render_shows_field_match_rate_for_each_file():
+    result = _result(
+        "a.pdf",
+        submission_id=FieldValue(value="AI-1", status="extracted"),
+    )
+
+    html = render([result])
+
+    assert "field-match-rate" in html
+    # 1 of 22 fields extracted
+    assert str(round(1 / 22, 2)) in html
+
+
+def test_render_shows_field_match_rate_even_when_vision_was_not_used():
+    html = render([_result("a.pdf")])
+    assert "field-match-rate" in html
+    assert "0.0" in html

@@ -593,6 +593,7 @@ confidence = floor + (ceiling - floor) * corroboration</div>
         <tr><td class="mono">schemas</td><td class="mono">FieldValue</td><td>One field's value, status, evidence list, and computed <code>confidence</code>.</td></tr>
         <tr><td class="mono">schemas</td><td class="mono">Evidence</td><td>One citation: page/slide, element ID, quote, and the method that produced it.</td></tr>
         <tr><td class="mono">schemas</td><td class="mono">ExtractionResult</td><td>The full output: 22 fields, metrics, incidents, review flags, warnings, and the raw vision observations.</td></tr>
+        <tr><td class="mono">schemas</td><td class="mono">ExtractionResult.field_match_rate</td><td>Computed from <code>fields</code>: the fraction of the 22 canonical fields resolved as a confident <code>extracted</code> match for this document.</td></tr>
         <tr><td class="mono">schemas</td><td class="mono">VisionIntegrity</td><td>Computed from <code>vision_observations</code>: how many Granite Vision tasks were clean/partially-recovered/failed, a success rate, a pass/review/fail rating, and the specific loss note for each non-clean task.</td></tr>
         <tr><td class="mono">schemas</td><td class="mono">ReviewFlag</td><td>A rule-generated suggestion for a human — explicitly never a compliance finding.</td></tr>
         <tr><td class="mono">reporting.json_writer / markdown_writer</td><td class="mono">write()</td><td>Renders an <code>ExtractionResult</code> into the two sibling output files.</td></tr>
@@ -628,10 +629,13 @@ confidence = floor + (ceiling - floor) * corroboration</div>
       The same pipeline run independently over several documents, combined into one report: one row per
       (file, field), with that field's status, value, and confidence. Written as CSV, or as a styled HTML
       report when <code>--out</code> ends in <code>.html</code> — no extra flag needed. A file that fails to
-      parse or extract is reported and skipped rather than aborting the whole batch. With <code>--vision</code>,
-      every row also carries that document's <code>vision_integrity</code> rating, success rate, and any
-      Granite Vision data-loss notes (CSV: <code>vision_rating</code>/<code>vision_success_rate</code>/<code>vision_data_loss</code>
-      columns; HTML: a pass/review/fail callout under each file's heading).
+      parse or extract is reported and skipped rather than aborting the whole batch. Every row also carries
+      that document's <code>field_match_rate</code> — the fraction of the 22 canonical fields resolved as a
+      confident <code>extracted</code> match (<code>needs_review</code>/<code>ambiguous</code>/<code>conflicting</code>
+      count the same as <code>missing</code> here, since all three still need a human to confirm the value).
+      With <code>--vision</code>, every row also carries that document's <code>vision_integrity</code> rating,
+      success rate, and any Granite Vision data-loss notes (CSV: <code>field_match_rate</code>/<code>vision_rating</code>/<code>vision_success_rate</code>/<code>vision_data_loss</code>
+      columns; HTML: a field-match-rate line plus a pass/review/fail vision callout under each file's heading).
     </p>
   </div>
 </section>

@@ -9,7 +9,10 @@ from ai_oversight.schemas import (
     VisionObservation,
 )
 
-_HEADER = "file_name,field,status,value,confidence,vision_rating,vision_success_rate,vision_data_loss"
+_HEADER = (
+    "file_name,field,status,value,confidence,field_match_rate,"
+    "vision_rating,vision_success_rate,vision_data_loss"
+)
 
 
 def _result(source_file: str, **field_overrides) -> ExtractionResult:
@@ -91,3 +94,17 @@ def test_write_reports_fail_rating_and_loss_notes_when_a_vision_task_recovered_n
     content = out.read_text()
     assert ",fail,0.0," in content
     assert "JSON parse error: boom" in content
+
+
+def test_write_includes_field_match_rate_for_each_row(tmp_path):
+    result = _result(
+        "a.pdf",
+        submission_id=FieldValue(value="AI-1", status="extracted"),
+    )
+    out = tmp_path / "report.csv"
+
+    write([result], out)
+
+    rows = out.read_text().splitlines()
+    # 1 of 22 fields extracted
+    assert all(f",{round(1 / 22, 2)}," in row for row in rows[1:])

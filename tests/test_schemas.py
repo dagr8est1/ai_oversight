@@ -214,3 +214,41 @@ def test_vision_integrity_is_computed_not_settable_and_serializes():
     result = _result_with_observations([])
     assert result.model_dump()["vision_integrity"]["rating"] == "pass"
     assert "vision_integrity" in result.model_dump_json()
+
+
+def _result_with_statuses(statuses: list[str]) -> ExtractionResult:
+    # CANONICAL_FIELDS has 22 entries; pad/trim statuses to match 1:1
+    fields = {
+        name: FieldValue(status=status) for name, status in zip(CANONICAL_FIELDS, statuses, strict=True)
+    }
+    return ExtractionResult(
+        document_id="sha256:abc",
+        source_file="x.pdf",
+        document_type="internal",
+        extracted_at="2026-01-01T00:00:00Z",
+        fields=fields,
+    )
+
+
+def test_field_match_rate_is_zero_when_nothing_was_extracted():
+    result = _result_with_statuses(["missing"] * 22)
+    assert result.field_match_rate == 0.0
+
+
+def test_field_match_rate_is_one_when_every_field_was_extracted():
+    result = _result_with_statuses(["extracted"] * 22)
+    assert result.field_match_rate == 1.0
+
+
+def test_field_match_rate_only_counts_extracted_status_not_other_non_missing_statuses():
+    # needs_review/ambiguous/conflicting all mean "not a confident match yet"
+    # -- same as missing for this rate, even though they aren't literally absent
+    statuses = ["extracted"] * 11 + ["needs_review", "ambiguous", "conflicting"] + ["missing"] * 8
+    result = _result_with_statuses(statuses)
+    assert result.field_match_rate == round(11 / 22, 2)
+
+
+def test_field_match_rate_is_computed_not_settable_and_serializes():
+    result = _result_with_statuses(["extracted"] * 22)
+    assert result.model_dump()["field_match_rate"] == 1.0
+    assert "field_match_rate" in result.model_dump_json()
