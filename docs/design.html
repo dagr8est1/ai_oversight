@@ -129,13 +129,30 @@
     /* a sticky header can trigger a stray blank page in Chrome's print
        pagination, and in-page jump links are useless on paper anyway */
     header.top { display: none; }
-    @page { size: letter landscape; margin: 14mm; }
+    @page { size: letter portrait; margin: 14mm; }
     /* overflow-x:auto has no effect once there's no scrollbar to use --
        on paper that just silently clips anything past the page edge, so
        let wide tables shrink and wrap instead of scrolling */
     .table-frame { overflow-x: visible; }
-    .table-frame table { min-width: 0; width: 100%; table-layout: fixed; font-size: 0.72rem; }
-    .table-frame td, .table-frame th { overflow-wrap: break-word; }
+    .table-frame table { min-width: 0; width: 100%; table-layout: fixed; font-size: 0.62rem; }
+    .table-frame td, .table-frame th { overflow-wrap: break-word; padding: 0.3rem 0.35rem; }
+    /* portrait's narrower content width leaves six roughly-equal columns too
+       tight for FIELD/SOURCE text -- give those two more room and take it
+       from the shorter STATUS/CONF./GROUND TRUTH columns */
+    .table-frame th:nth-child(1), .table-frame td:nth-child(1) { width: 13%; }
+    .table-frame th:nth-child(2), .table-frame td:nth-child(2) { width: 10%; }
+    .table-frame th:nth-child(3), .table-frame td:nth-child(3) { width: 15%; }
+    .table-frame th:nth-child(4), .table-frame td:nth-child(4) { width: 7%; }
+    .table-frame th:nth-child(5), .table-frame td:nth-child(5) { width: 10%; }
+    .table-frame th:nth-child(6), .table-frame td:nth-child(6) { width: 45%; }
+    /* the pill's white-space:nowrap is fine on screen but in a narrow
+       portrait column it pushes "Granite Vision" past the page edge --
+       let it wrap here and shrink it to match the smaller table font */
+    /* inline-flex items don't shrink below their content's natural width
+       (min-width:auto), so the screen pill ignores a narrow column and
+       overflows into the next one instead of wrapping -- inline-block
+       does respect the column width here */
+    .table-frame .pill { display: inline-block; white-space: normal; font-size: 0.85em; padding: 0.1em 0.45em; }
     /* an SVG can never be split across pages -- it's placed whole on one
        page or pushed entirely to the next, which otherwise leaves a
        near-blank page behind it. Keep one regular page size by showing
@@ -144,7 +161,7 @@
     .diagram-screen { display: none; }
     .diagram-print-page { display: block; overflow-x: visible; }
     .diagram-print-page:first-of-type { break-before: page; }
-    .diagram-print-page svg { width: auto; height: 175mm; max-width: 100%; }
+    .diagram-print-page svg { width: 100%; height: auto; max-height: 240mm; }
   }
 </style>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Literata:wght@500;600&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
