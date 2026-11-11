@@ -11,6 +11,25 @@ the full design and phased roadmap.
 just venv
 ```
 
+That installs the base project only — enough for `parse` and the
+deterministic `rules` backend, which never download or run a model. The two
+optional model extras pull in `transformers`/`torch` (and `mlx-vlm` on Apple
+Silicon) and are each a separate install, since they're large and not needed
+unless you're using that specific feature:
+
+```bash
+uv sync --extra llm     # Qwen3-4B-Instruct-2507 (the qwen_local backend)
+uv sync --extra vision  # Granite Vision 4.1 4B (--vision chart/table recovery)
+uv sync --extra llm --extra vision   # both, e.g. for `--backend qwen_local --vision`
+```
+
+Neither command downloads the model weights itself — installing an extra
+only adds the Python packages needed to run that model. The actual model
+(several GB) is fetched from Hugging Face automatically the first time the
+code calls it (`from_pretrained`/`mlx_vlm.load`, on the first `extract`,
+`vision`, or `batch` command that needs it) and then cached locally for
+every run after that; no manual download step and no credentials required.
+
 ## Development
 
 ```bash
