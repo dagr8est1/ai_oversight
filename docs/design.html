@@ -666,6 +666,34 @@ confidence = floor + (ceiling - floor) * corroboration</div>
     the substantiation check caught the mismatch and correctly held it at <code>needs_review</code> instead of
     letting it through as <code>extracted</code>.
   </p>
+
+  <h3>File-level summary</h3>
+  <p style="font-size:0.9rem">
+    <strong>Field match (22 fields)</strong> is this pipeline's own <code>field_match_rate</code>: the fraction
+    of all 22 canonical fields resolved as a confident <code>extracted</code> match. <strong>Field match (excl.
+    not-mentioned)</strong> narrows the denominator to only the fields the ground-truth check confirms are
+    genuinely present in that source document (<span class="pill extracted">Yes</span> or
+    <span class="pill needs-review">Partial</span>) — a field ground truth says is truly absent
+    (<span class="pill missing">Not stated</span>) and the pipeline correctly reports <code>missing</code> is a
+    correct outcome, but counting it in a "how much did we successfully extract" denominator would understate
+    the rate for documents that simply state fewer of the 22 facts. <strong>Granite parsing</strong> is this
+    run's <code>vision_integrity</code> rating (see Stage 2 above); <span class="pill missing">N/A</span> means
+    the file has a native text layer and Granite Vision never ran.
+  </p>
+  <div class="table-frame">
+    <table>
+      <thead><tr><th>File</th><th>Granite parsing</th><th>Field match (22 fields)</th><th>Field match (excl. not-mentioned)</th></tr></thead>
+      <tbody>
+        <tr><td class="mono">Mini_Vision_Test_Internal_AI_Risk.pdf</td><td><span class="pill extracted">PASS</span></td><td class="mono">0.50 (11/22)</td><td class="mono">0.92 (11/12)</td></tr>
+        <tr><td class="mono">Mini_Vision_Test_External_AI_Usage.pptx</td><td><span class="pill extracted">PASS</span></td><td class="mono">0.45 (10/22)</td><td class="mono">0.91 (10/11)</td></tr>
+        <tr><td class="mono">Sample_Internal_AI_Oversight_Report.pdf</td><td><span class="pill missing">N/A</span></td><td class="mono">1.00 (22/22)</td><td class="mono">1.00 (22/22)</td></tr>
+        <tr><td class="mono">Sample_External_AI_Usage_Disclosure.pptx</td><td><span class="pill missing">N/A</span></td><td class="mono">1.00 (22/22)</td><td class="mono">1.00 (22/22)</td></tr>
+        <tr><td class="mono">Vision_Required_Internal_AI_Risk_Report.pdf</td><td><span class="pill needs-review">REVIEW</span></td><td class="mono">0.50 (11/22)</td><td class="mono">0.69 (11/16)</td></tr>
+        <tr><td class="mono">Vision_Required_External_AI_Usage_Disclosure.pptx</td><td><span class="pill extracted">PASS</span></td><td class="mono">0.55 (12/22)</td><td class="mono">0.71 (12/17)</td></tr>
+      </tbody>
+    </table>
+  </div>
+
     <h3>Mini_Vision_Test_Internal_AI_Risk.pdf (1 page)</h3>
   <p style="font-size:0.85rem">
     <span class="pill needs-review">Granite Vision</span> this file has no native text layer (fully scanned) -- every
