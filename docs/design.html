@@ -680,24 +680,25 @@ confidence = floor + (ceiling - floor) * corroboration</div>
 
   <h3>File-level summary</h3>
   <p style="font-size:0.9rem">
-    <strong>Field match (22 fields)</strong> is this pipeline's own <code>field_match_rate</code>: the fraction
-    of all 22 canonical fields that resolved to <em>any</em> non-null value — a <span class="pill needs-review">needs_review</span>,
-    <span class="pill ambiguous">ambiguous</span>, or <span class="pill conflicting">conflicting</span> field
-    still counts as matched here as long as it carries a real value for a reviewer to look at; only a field
-    with no value at all (<span class="pill missing">missing</span>, or a status that settled on nothing, e.g.
-    an <code>ambiguous</code> field too unresolved to produce even a tentative value) counts as unmatched.
-    <strong>Field match (excl. not-mentioned)</strong> narrows the denominator to only the fields the
-    ground-truth check confirms are genuinely present in that source document (<span class="pill extracted">Yes</span>
-    or <span class="pill needs-review">Partial</span>) — a field ground truth says is truly absent
-    (<span class="pill missing">Not stated</span>) and the pipeline correctly reports <code>missing</code> is a
-    correct outcome, but counting it in a "how much did we successfully match" denominator would understate
-    the rate for documents that simply state fewer of the 22 facts. <strong>Granite parsing</strong> is this
-    run's <code>vision_integrity</code> rating (see Stage 2 above); <span class="pill missing">N/A</span> means
-    the file has a native text layer and Granite Vision never ran.
+    <strong>Gross Field Match (22 fields)</strong> is this pipeline's own <code>field_match_rate</code>: the
+    fraction of all 22 canonical fields that resolved to <em>any</em> non-null value — a
+    <span class="pill needs-review">needs_review</span>, <span class="pill ambiguous">ambiguous</span>, or
+    <span class="pill conflicting">conflicting</span> field still counts as matched here as long as it carries
+    a real value for a reviewer to look at; only a field with no value at all (<span class="pill missing">missing</span>,
+    or a status that settled on nothing, e.g. an <code>ambiguous</code> field too unresolved to produce even a
+    tentative value) counts as unmatched. <strong>Ground-truth Field Match (excl. not-mentioned)</strong>
+    narrows the denominator to only the fields the ground-truth check confirms are genuinely present in that
+    source document (<span class="pill extracted">Yes</span> or <span class="pill needs-review">Partial</span>)
+    — a field ground truth says is truly absent (<span class="pill missing">Not stated</span>) and the pipeline
+    correctly reports <code>missing</code> is a correct outcome, but counting it in a "how much did we
+    successfully match" denominator would understate the rate for documents that simply state fewer of the 22
+    facts. <strong>Granite parsing for image/chart</strong> is this run's <code>vision_integrity</code> rating
+    (see Stage 2 above); <span class="pill missing">N/A</span> means the file has a native text layer and
+    Granite Vision never ran.
   </p>
   <div class="table-frame">
     <table>
-      <thead><tr><th>File</th><th>Granite parsing</th><th>Field match (22 fields)</th><th>Field match (excl. not-mentioned)</th></tr></thead>
+      <thead><tr><th>File</th><th>Granite parsing for image/chart</th><th>Gross Field Match (22 fields)</th><th>Ground-truth Field Match (excl. not-mentioned)</th></tr></thead>
       <tbody>
         <tr><td class="mono">Mini_Vision_Test_Internal_AI_Risk.pdf</td><td><span class="pill extracted">PASS</span></td><td class="mono">0.59 (13/22)</td><td class="mono">1.00 (12/12)</td></tr>
         <tr><td class="mono">Mini_Vision_Test_External_AI_Usage.pptx</td><td><span class="pill extracted">PASS</span></td><td class="mono">0.50 (11/22)</td><td class="mono">1.00 (11/11)</td></tr>
