@@ -8,6 +8,7 @@ from ai_oversight.schemas import (
     Evidence,
     ExtractionResult,
     FieldValue,
+    VisionObservation,
 )
 
 
@@ -107,3 +108,109 @@ def test_field_value_confidence_is_computed_not_settable_and_serializes():
 def test_evidence_requires_page_element_quote_and_method():
     ev = Evidence(page_or_slide=2, element_id="page2.kv0", quote="AI-INT-2026-041", method="pymupdf_text_block_pair")
     assert ev.page_or_slide == 2
+
+
+def _result_with_observations(observations: list[VisionObservation]) -> ExtractionResult:
+    fields = {name: FieldValue(status="missing") for name in CANONICAL_FIELDS}
+    return ExtractionResult(
+        document_id="sha256:abc",
+        source_file="x.pdf",
+        document_type="internal",
+        extracted_at="2026-01-01T00:00:00Z",
+        fields=fields,
+        vision_observations=observations,
+    )
+
+
+def test_vision_integrity_passes_trivially_with_no_vision_observations():
+    # no vision stage run at all -- nothing to lose, so this isn't the same
+    # as "every task happened to succeed"
+    result = _result_with_observations([])
+    vi = result.vision_integrity
+    assert vi.tasks_total == 0
+    assert vi.rating == "pass"
+    assert vi.success_rate == 1.0
+    assert vi.loss_notes == []
+
+
+def test_vision_integrity_passes_when_every_task_is_clean():
+    obs = [
+        VisionObservation(task="tables_json", page_or_slide=1, raw_response="x", parsed=[{"a": 1}], status="ok"),
+        VisionObservation(task="chart2csv", page_or_slide=2, raw_response="y", parsed=[{"b": 2}], status="ok"),
+    ]
+    vi = _result_with_observations(obs).vision_integrity
+    assert vi.rating == "pass"
+    assert vi.tasks_total == 2
+    assert vi.tasks_clean == 2
+    assert vi.success_rate == 1.0
+    assert vi.loss_notes == []
+
+
+def test_vision_integrity_flags_review_for_a_truncation_repaired_task():
+    # status "ok" but with a note means something real was recovered, with
+    # a caveat -- worse than clean, but not a total loss
+    obs = [
+        VisionObservation(task="tables_json", page_or_slide=1, raw_response="x", parsed=[{"a": 1}], status="ok"),
+        VisionObservation(
+            task="tables_json",
+            page_or_slide=2,
+            raw_response="y",
+            parsed=[{"b": 2}],
+            status="ok",
+            note="response was truncated mid-generation; recovered the complete rows before the cutoff, dropped the incomplete one",
+        ),
+    ]
+    vi = _result_with_observations(obs).vision_integrity
+    assert vi.rating == "review"
+    assert vi.tasks_clean == 1
+    assert vi.tasks_partial == 1
+    assert vi.tasks_failed == 0
+    assert 0.0 < vi.success_rate < 1.0
+    assert len(vi.loss_notes) == 1
+    assert "truncated" in vi.loss_notes[0]
+
+
+def test_vision_integrity_fails_when_any_task_recovered_nothing():
+    obs = [
+        VisionObservation(task="tables_json", page_or_slide=1, raw_response="x", parsed=[{"a": 1}], status="ok"),
+        VisionObservation(
+            task="tables_json",
+            page_or_slide=2,
+            raw_response="bad",
+            parsed=None,
+            status="needs_review",
+            note="JSON parse error: boom",
+        ),
+    ]
+    vi = _result_with_observations(obs).vision_integrity
+    assert vi.rating == "fail"
+    assert vi.tasks_failed == 1
+    assert len(vi.loss_notes) == 1
+    assert "JSON parse error: boom" in vi.loss_notes[0]
+
+
+def test_vision_integrity_fail_outranks_review_regardless_of_other_successes():
+    # one outright-lost chart/table must not be averaged away by many
+    # unrelated clean/partial tasks elsewhere in the same document
+    obs = [
+        VisionObservation(task="tables_json", page_or_slide=1, raw_response="x", parsed=[{"a": 1}], status="ok"),
+        VisionObservation(
+            task="tables_json", page_or_slide=2, raw_response="x", parsed=[{"a": 1}], status="ok", note="partial"
+        ),
+        VisionObservation(
+            task="tables_json",
+            page_or_slide=3,
+            raw_response="bad",
+            parsed=None,
+            status="needs_review",
+            note="parse failed",
+        ),
+    ]
+    vi = _result_with_observations(obs).vision_integrity
+    assert vi.rating == "fail"
+
+
+def test_vision_integrity_is_computed_not_settable_and_serializes():
+    result = _result_with_observations([])
+    assert result.model_dump()["vision_integrity"]["rating"] == "pass"
+    assert "vision_integrity" in result.model_dump_json()

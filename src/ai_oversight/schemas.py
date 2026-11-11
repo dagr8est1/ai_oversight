@@ -156,6 +156,21 @@ class VisionObservation(BaseModel):
     note: str | None = None
 
 
+class VisionIntegrity(BaseModel):
+    """Document-level summary of how reliably Granite Vision's output was
+    recovered, so a reviewer can tell at a glance whether this document's
+    vision-derived content is trustworthy without reading every
+    VisionObservation by hand."""
+
+    tasks_total: int
+    tasks_clean: int
+    tasks_partial: int
+    tasks_failed: int
+    success_rate: float
+    rating: Literal["pass", "review", "fail"]
+    loss_notes: list[str] = Field(default_factory=list)
+
+
 class ExtractionResult(BaseModel):
     document_id: str
     source_file: str
@@ -168,3 +183,47 @@ class ExtractionResult(BaseModel):
     review_flags: list[ReviewFlag] = Field(default_factory=list)
     extraction_warnings: list[str] = Field(default_factory=list)
     vision_observations: list[VisionObservation] = Field(default_factory=list)
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def vision_integrity(self) -> VisionIntegrity:
+        """Derived purely from vision_observations, never a separately
+        stored field, so it can't drift out of sync with the observations
+        a caller attaches after the fact (cli.py sets vision_observations
+        post-extraction). A task is "clean" only with no caveat at all;
+        "partial" parsed but with a noted loss (e.g. a truncated response
+        repaired by keeping only the complete rows before the cutoff);
+        "failed" recovered nothing. Any failure drives the rating to
+        "fail" regardless of how many other tasks were clean -- a single
+        lost chart/table is a real gap, not something unrelated successes
+        elsewhere in the same document should average away.
+        """
+        observations = self.vision_observations
+        total = len(observations)
+        clean = sum(1 for o in observations if o.status == "ok" and o.note is None)
+        partial = sum(1 for o in observations if o.status == "ok" and o.note is not None)
+        failed = total - clean - partial
+        success_rate = 1.0 if total == 0 else round(clean / total, 2)
+
+        if total == 0 or clean == total:
+            rating: Literal["pass", "review", "fail"] = "pass"
+        elif failed > 0:
+            rating = "fail"
+        else:
+            rating = "review"
+
+        loss_notes = [
+            f"page/slide {o.page_or_slide} ({o.task}): {o.note}"
+            for o in observations
+            if o.status != "ok" or o.note is not None
+        ]
+
+        return VisionIntegrity(
+            tasks_total=total,
+            tasks_clean=clean,
+            tasks_partial=partial,
+            tasks_failed=failed,
+            success_rate=success_rate,
+            rating=rating,
+            loss_notes=loss_notes,
+        )

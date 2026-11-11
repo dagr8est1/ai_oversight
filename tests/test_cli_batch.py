@@ -10,6 +10,8 @@ SAMPLES = Path(__file__).parent.parent / "data" / "samples"
 SAMPLE_PDF = SAMPLES / "Sample_Internal_AI_Oversight_Report.pdf"
 SAMPLE_PPTX = SAMPLES / "Sample_External_AI_Usage_Disclosure.pptx"
 
+_HEADER = "file_name,field,status,value,confidence,vision_rating,vision_success_rate,vision_data_loss"
+
 
 def test_batch_writes_one_combined_csv_row_per_field_per_file(tmp_path):
     out = tmp_path / "report.csv"
@@ -20,7 +22,7 @@ def test_batch_writes_one_combined_csv_row_per_field_per_file(tmp_path):
 
     assert result.exit_code == 0, result.output
     rows = out.read_text().splitlines()
-    assert rows[0] == "file_name,field,status,value,confidence"
+    assert rows[0] == _HEADER
     assert len(rows) == 1 + 22 * 2
     assert any(row.startswith("Sample_Internal_AI_Oversight_Report.pdf,submission_id,") for row in rows)
     assert any(row.startswith("Sample_External_AI_Usage_Disclosure.pptx,") for row in rows)
@@ -82,3 +84,33 @@ def test_batch_rejects_unknown_backend_with_a_friendly_error(tmp_path):
     assert result.exit_code != 0
     assert "made_up" in result.output
     assert "Traceback" not in result.output
+
+
+def test_batch_attaches_vision_observations_and_surfaces_a_failed_task_in_the_csv(tmp_path, monkeypatch):
+    from ai_oversight import cli
+    from ai_oversight.schemas import VisionObservation
+
+    def fake_enrich_document(document_path, doc, vision_fn=None, settings=None):
+        observations = [
+            VisionObservation(
+                task="tables_json",
+                page_or_slide=1,
+                raw_response="bad",
+                parsed=None,
+                status="needs_review",
+                note="JSON parse error: boom",
+            )
+        ]
+        return doc, observations, None
+
+    monkeypatch.setattr(cli.granite_vision, "enrich_document", fake_enrich_document)
+    out = tmp_path / "report.csv"
+
+    result = runner.invoke(
+        app, ["batch", str(SAMPLE_PDF), "--backend", "rules", "--vision", "--out", str(out)]
+    )
+
+    assert result.exit_code == 0, result.output
+    content = out.read_text()
+    assert ",fail,0.0," in content
+    assert "JSON parse error: boom" in content

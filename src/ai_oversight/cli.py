@@ -217,19 +217,28 @@ def batch(
             continue
 
         backend_input = parsed
+        vision_observations = []
+        vision_warning = None
         if resolved_vision:
-            backend_input, _vision_observations, vision_warning = granite_vision.enrich_document(
+            backend_input, vision_observations, vision_warning = granite_vision.enrich_document(
                 document, parsed
             )
             if vision_warning:
                 typer.echo(f"{document}: {vision_warning}", err=True)
 
         try:
-            results.append(backend_fn(backend_input))
+            result = backend_fn(backend_input)
         except Exception as exc:  # noqa: BLE001 - one bad file must not abort the whole batch
             detail = str(exc)
             message = f"{type(exc).__name__}: {detail}" if detail else type(exc).__name__
             typer.echo(f"skipping {document}: extraction failed ({message})", err=True)
+            continue
+
+        if resolved_vision:
+            result.vision_observations = vision_observations
+            if vision_warning:
+                result.extraction_warnings.append(vision_warning)
+        results.append(result)
 
     if not results:
         typer.echo("no file extracted successfully; nothing written", err=True)

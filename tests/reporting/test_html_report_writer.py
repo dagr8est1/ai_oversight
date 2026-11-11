@@ -1,7 +1,13 @@
 from datetime import UTC, datetime
 
 from ai_oversight.reporting.html_report_writer import render, write
-from ai_oversight.schemas import CANONICAL_FIELDS, Evidence, ExtractionResult, FieldValue
+from ai_oversight.schemas import (
+    CANONICAL_FIELDS,
+    Evidence,
+    ExtractionResult,
+    FieldValue,
+    VisionObservation,
+)
 
 
 def _result(source_file: str, **field_overrides) -> ExtractionResult:
@@ -69,3 +75,41 @@ def test_write_saves_the_rendered_html_to_disk(tmp_path):
 
     assert out.exists()
     assert out.read_text().strip().startswith("<!doctype html>")
+
+
+def test_render_omits_vision_integrity_block_when_vision_was_not_used():
+    html = render([_result("a.pdf")])
+    assert '<div class="vision-integrity' not in html
+
+
+def test_render_shows_pass_rating_when_every_vision_task_is_clean():
+    result = _result("a.pdf")
+    result.vision_observations = [
+        VisionObservation(task="tables_json", page_or_slide=1, raw_response="x", parsed=[{"a": 1}], status="ok")
+    ]
+
+    html = render([result])
+
+    assert "vision-integrity" in html
+    assert "vision-pass" in html
+    assert "PASS" in html
+
+
+def test_render_shows_fail_rating_and_loss_notes_when_a_vision_task_recovered_nothing():
+    result = _result("a.pdf")
+    result.vision_observations = [
+        VisionObservation(
+            task="tables_json",
+            page_or_slide=3,
+            raw_response="bad",
+            parsed=None,
+            status="needs_review",
+            note="JSON parse error: boom",
+        )
+    ]
+
+    html = render([result])
+
+    assert "vision-fail" in html
+    assert "FAIL" in html
+    assert "JSON parse error: boom" in html

@@ -458,6 +458,20 @@
     element. Whichever Stage 3 backend runs next never knows the difference between native and vision-recovered content.
   </p>
   <p>
+    This stage is <strong>not</strong> guaranteed lossless, in two distinct ways: a response cut off past
+    <code>VISION_MAX_TOKENS</code> only yields the complete rows before the cutoff — the incomplete trailing
+    row is dropped, not approximated; and a response that never parses at all (even after repair) contributes
+    nothing to the IR, surfacing only as a warning. More fundamentally, for a scanned page or picture shape
+    Granite's read of the image <em>is</em> the only source of truth — there's no native text layer to check
+    it against. <code>ExtractionResult.vision_integrity</code> (a <code>computed_field</code>, derived purely
+    from <code>vision_observations</code> so it can't drift out of sync) turns this into a document-level
+    <code>pass</code>/<code>review</code>/<code>fail</code> rating: any outright-failed task drives it to
+    <code>fail</code> regardless of how many other tasks on the same document were clean, a merely
+    truncation-repaired task drives it to <code>review</code>, and it's <code>pass</code> only if every vision
+    task recovered cleanly (or none ran at all). The <code>batch</code> report surfaces this per file, with the
+    specific loss note for every non-clean task.
+  </p>
+  <p>
     Because this stage is slow (a real local vision model, also free of any API or token cost to run), its output can be cached once with the
     <code>vision</code> CLI command and replayed via <code>extract --vision-cache</code> — Stage 3 can then be
     iterated on repeatedly without re-running Granite.
@@ -579,6 +593,7 @@ confidence = floor + (ceiling - floor) * corroboration</div>
         <tr><td class="mono">schemas</td><td class="mono">FieldValue</td><td>One field's value, status, evidence list, and computed <code>confidence</code>.</td></tr>
         <tr><td class="mono">schemas</td><td class="mono">Evidence</td><td>One citation: page/slide, element ID, quote, and the method that produced it.</td></tr>
         <tr><td class="mono">schemas</td><td class="mono">ExtractionResult</td><td>The full output: 22 fields, metrics, incidents, review flags, warnings, and the raw vision observations.</td></tr>
+        <tr><td class="mono">schemas</td><td class="mono">VisionIntegrity</td><td>Computed from <code>vision_observations</code>: how many Granite Vision tasks were clean/partially-recovered/failed, a success rate, a pass/review/fail rating, and the specific loss note for each non-clean task.</td></tr>
         <tr><td class="mono">schemas</td><td class="mono">ReviewFlag</td><td>A rule-generated suggestion for a human — explicitly never a compliance finding.</td></tr>
         <tr><td class="mono">reporting.json_writer / markdown_writer</td><td class="mono">write()</td><td>Renders an <code>ExtractionResult</code> into the two sibling output files.</td></tr>
         <tr><td class="mono">cli</td><td class="mono">parse / vision / extract</td><td>The three entry points: structural-only, vision-only (with caching), and the full pipeline.</td></tr>
@@ -613,7 +628,10 @@ confidence = floor + (ceiling - floor) * corroboration</div>
       The same pipeline run independently over several documents, combined into one report: one row per
       (file, field), with that field's status, value, and confidence. Written as CSV, or as a styled HTML
       report when <code>--out</code> ends in <code>.html</code> — no extra flag needed. A file that fails to
-      parse or extract is reported and skipped rather than aborting the whole batch.
+      parse or extract is reported and skipped rather than aborting the whole batch. With <code>--vision</code>,
+      every row also carries that document's <code>vision_integrity</code> rating, success rate, and any
+      Granite Vision data-loss notes (CSV: <code>vision_rating</code>/<code>vision_success_rate</code>/<code>vision_data_loss</code>
+      columns; HTML: a pass/review/fail callout under each file's heading).
     </p>
   </div>
 </section>
